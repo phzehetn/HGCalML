@@ -281,6 +281,7 @@ def gravnet_model(Inputs,
         pred_time,
         pred_id,
         pred_dist,
+        energy,
         dict_output=True,
         is_preselected=is_preselected
         )

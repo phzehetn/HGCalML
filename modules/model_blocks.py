@@ -82,6 +82,7 @@ def re_integrate_to_full_hits(
         pred_time,
         pred_id,
         pred_dist,
+        energy,
         dict_output=False,
         is_preselected=False,
         ):
@@ -102,6 +103,7 @@ def re_integrate_to_full_hits(
     ('pred_time', pred_time),
     ('pred_id', pred_id),
     ('pred_dist', pred_dist),
+    ('energy', energy),
     ('row_splits', row_splits)
     '''
     from GravNetLayersRagged import MultiBackScatterOrGather
@@ -118,6 +120,7 @@ def re_integrate_to_full_hits(
         pred_time = MultiBackScatterOrGather(default=10.)([pred_time, scatterids])
         pred_id = MultiBackScatterOrGather(default=0.)([pred_id, scatterids])
         pred_dist = MultiBackScatterOrGather(default=1.)([pred_dist, scatterids])
+        energy = MultiBackScatterOrGather(default=0.)([energy, scatterids])
     
     row_splits = None
     if is_preselected:
@@ -136,6 +139,7 @@ def re_integrate_to_full_hits(
             'pred_time': pred_time,
             'pred_id': pred_id,
             'pred_dist': pred_dist,
+            'rechit_energy': energy,
             'row_splits': row_splits }
         
     return [
@@ -148,6 +152,7 @@ def re_integrate_to_full_hits(
         ('pred_time', pred_time),
         ('pred_id', pred_id),
         ('pred_dist', pred_dist),
+        ('rechit_energy', energy),
         ('row_splits', pre_selection['orig_row_splits'])]
     
     
