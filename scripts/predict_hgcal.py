@@ -18,13 +18,20 @@ parser.add_argument("--unbuffered",
                     default=False, action="store_true")
 
 parser.add_argument("--max_files", help="Limit number of files", default=-1)
+parser.add_argument("--extended", help="Use extended format for files", action='store_true')
 
 args = parser.parse_args()
 
 
-HGCalPredictor(args.data_collection, args.data_collection, args.output_dir, inputdir=args.data_dir, unbuffered=False, max_files=int(args.max_files)).predict(model_path=args.inputModel)
+predictor = HGCalPredictor(
+     args.data_collection, 
+     args.data_collection, 
+     args.output_dir, 
+     inputdir=args.data_dir, 
+     unbuffered=False, 
+     max_files=int(args.max_files))
 
-
-
-
-
+if args.extended:
+     predictor.predict_all(model_path=args.inputModel)
+else:
+     predictor.predict(model_path=args.inputModel)
