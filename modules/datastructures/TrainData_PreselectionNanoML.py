@@ -1,14 +1,15 @@
+import os
+import pickle
+import gzip
+import numpy as np
+#from IPython import embed
+
 from DeepJetCore.TrainData import TrainData
 from DeepJetCore import SimpleArray
 from DeepJetCore.modeltools import load_model
-import pickle
-import numpy as np
-#from IPython import embed
-import os
-
-from datastructures.TrainData_NanoML import TrainData_NanoML
 from DeepJetCore.dataPipeline import TrainDataGenerator
 
+from datastructures.TrainData_NanoML import TrainData_NanoML
 
 modelfile = os.getenv("HGCALML")+'/models/pre_selection_june22/KERAS_model.h5'
 
