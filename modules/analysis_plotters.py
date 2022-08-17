@@ -1,6 +1,5 @@
 import pdb
 import os
-import re
 
 import pandas as pd
 import numpy as np
@@ -28,7 +27,6 @@ def add_dict_to_df(df, dictionary):
     for key in dictionary.keys():
         value = dictionary[key]
         if len(value.shape) != 2:
-            print("Unexpected dimension for key", key)
             continue
         # if value.shape[1] == 0:
         #     print("Nothing stored in key", key)
@@ -54,7 +52,7 @@ def add_dict_to_df(df, dictionary):
 
 class ComparisonPlotter():
 
-    def __init__(self, model1, model2, dc1, dc2=None):
+    def __init__(self, model1, model2, dc1, dc2=None, name1="Model 1", name2="Model 2"):
         if not self._is_model_or_path(model1):
             print("model1 should be a model or a valid path to a model")
             raise ValueError
@@ -90,6 +88,8 @@ class ComparisonPlotter():
         self.files_1 = [self.dc1.dataDir + f for f in self.dc1.samples]
         self.files_2 = [self.dc2.dataDir + f for f in self.dc2.samples]
         self.processed = False
+        self.name1 = str(name1)
+        self.name2 = str(name2)
 
     def _is_model_or_path(self, model):
         model_class = \
@@ -191,12 +191,16 @@ class ComparisonPlotter():
 
                 showers_df1 = showers_matcher1.get_result_as_dataframe()
                 showers_df2 = showers_matcher2.get_result_as_dataframe()
+                showers_df1['eventID'] = eventID
+                showers_df2['eventID'] = eventID
                 hits_df1 = pd.DataFrame()
                 hits_df2 = pd.DataFrame()
                 for d in [processed_pred_dict1, feat_dict1, truth_dict1]:
                     hits_df1 = add_dict_to_df(hits_df1, d)
                 for d in [processed_pred_dict2, feat_dict2, truth_dict2]:
                     hits_df2 = add_dict_to_df(hits_df2, d)
+                hits_df1['eventID'] = eventID
+                hits_df2['eventID'] = eventID
 
                 all_hits1 = pd.concat([all_hits1, hits_df1])
                 all_hits2 = pd.concat([all_hits2, hits_df2])
@@ -212,6 +216,8 @@ class ComparisonPlotter():
 
 
     def energy_distribution(self, nbins=50, title1='', title2=''):
+        if not self.processed:
+            self.process()
         rechits1 = self.all_hits1['recHitEnergy'].to_numpy()
         rechits2 = self.all_hits2['recHitEnergy'].to_numpy()
         fig, ax1 = plt.subplots(nrows=1, ncols=1, figsize=(20,10))
@@ -239,6 +245,112 @@ class ComparisonPlotter():
         return fig, (ax1, ax2)
 
 
+    def _resolution_plot(self, energy_range=None, figax=None):
+        if not self.processed:
+            self.process()
+        if figax is None:
+            fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(20,10))
+        else:
+            fig, ax = figax
+        mask_truth1 = self.all_showers1.truthHitAssignedX.notna().to_numpy()
+        mask_pred1 = self.all_showers1.pred_energy_high_quantile.notna().to_numpy()
+        mask1 = np.logical_and(mask_truth1, mask_pred1)
+        mask_truth2 = self.all_showers2.truthHitAssignedX.notna().to_numpy()
+        mask_pred2 = self.all_showers2.pred_energy_high_quantile.notna().to_numpy()
+        mask2 = np.logical_and(mask_truth2, mask_pred2)
+        showers1 = self.all_showers1[mask1]
+        showers2 = self.all_showers2[mask2]
+        if energy_range is not None:
+            showers1 = showers1[
+                (showers1.truthHitAssignedEnergies > energy_range[0]) &
+                (showers1.truthHitAssignedEnergies < energy_range[1]) ]
+            showers2 = showers2[
+                (showers2.truthHitAssignedEnergies > energy_range[0]) &
+                (showers2.truthHitAssignedEnergies < energy_range[1]) ]
+        else:
+            energy_range = ("0", "Inf")
+        truth1 = showers1.truthHitAssignedEnergies.to_numpy()
+        pred1 = showers1.pred_energy.to_numpy()
+        response1 = truth1 / pred1
+        response1 = pred1 / truth1
+        truth2 = showers2.truthHitAssignedEnergies.to_numpy()
+        pred2 = showers2.pred_energy.to_numpy()
+        response2 = pred2 / truth2
+        axt = ax.twinx()
+        numbers, bins, patches = ax.hist([response1, response2], density=True, bins=100)
+        ax.cla()
+        width = 0.4 * (bins[1] - bins[0])
+        bins_shifted = bins + width
+        label1 = self.name1 + " Energy: " + str(energy_range[0]) \
+            + " GeV - " + str(energy_range[1]) + " GeV"
+        label2 = self.name2 + " Energy: " + str(energy_range[0]) \
+            + " GeV - " + str(energy_range[1]) + " GeV"
+        ax.bar(bins[:-1], numbers[0], width, 
+            align='edge', color='darkslateblue', label=label1,)
+        axt.bar(bins_shifted[:-1], numbers[1], width, 
+            align='edge', color='forestgreen', label=label2,)
+        custom_lines = [
+            mpl.lines.Line2D([0], [0], color='darkslateblue', lw=4),
+            mpl.lines.Line2D([0], [0], color='forestgreen', lw=4)
+        ]
+        ax.legend(custom_lines, [label1, label2], fontsize=20)
+        return fig, (ax, axt)
+
+    def resolution_plots(self):
+        ranges = [(0, 10), (10, 20), (20, 50), (50, 100), (100, 200), (200, 500)]
+        fig, ax = plt.subplots(nrows=2, ncols=3, figsize=(40,20))
+        ax = ax.flatten()
+        pdb.set_trace()
+        N = min(ax.shape[0], len(ranges))
+        for i in range(N):
+            fig, axes = self._resolution_plot(energy_range=ranges[i], figax=(fig, ax[i]))
+        return fig, axes
+
+
+    def matched_showers(self):
+        N_events = self.all_showers1.eventID.max()
+        ratios1 = []
+        ratios2 = []
+        for i in range(1, N_events+1):
+            matched1 = self.all_showers1[self.all_showers1.eventID == i]
+            matched2 = self.all_showers2[self.all_showers2.eventID == i]
+            matched1 = matched1[matched1.truthHitAssignedX.notna()]
+            matched2 = matched2[matched2.truthHitAssignedX.notna()]
+            pred_matched1 = matched1[matched1.pred_pos.notna()]
+            pred_matched2 = matched2[matched2.pred_pos.notna()]
+            true_e1 = matched1.t_rec_energy.to_numpy()
+            matched_e1 = pred_matched1.t_rec_energy.to_numpy()
+            true_e2 = matched2.t_rec_energy.to_numpy()
+            matched_e2 = pred_matched2.t_rec_energy.to_numpy()
+            ratios1.append(matched_e1.sum() / true_e1.sum())
+            ratios2.append(matched_e2.sum() / true_e2.sum())
+        
+        ratios1 = np.array(ratios1)
+        ratios2 = np.array(ratios2)
+        assert np.logical_and(np.all(ratios1 >= 0), np.all(ratios1 <= 1))
+        assert np.logical_and(np.all(ratios2 >= 0), np.all(ratios2 <= 1))
+
+        fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(20,10))
+        axt = ax.twinx()
+
+        numbers, bins, patches = ax.hist([ratios1, ratios2], density=True, bins=30)
+        ax.cla()
+        width = 0.4 * (bins[1] - bins[0])
+        bins_shifted = bins + width
+        ax.bar(bins[:-1], numbers[0], width, 
+            align='edge', color='darkslateblue', label=self.name1,)
+        axt.bar(bins_shifted[:-1], numbers[1], width, 
+            align='edge', color='forestgreen', label=self.name2,)
+        custom_lines = [
+            mpl.lines.Line2D([0], [0], color='darkslateblue', lw=4),
+            mpl.lines.Line2D([0], [0], color='forestgreen', lw=4)
+        ]
+        ax.set_xlim((0,1))
+        ax.legend(custom_lines, [self.name1, self.name2], fontsize=20)
+        return fig, (ax, axt)
+
+        
+
 
 if __name__ == '__main__':
     data1 = '/Data/ML4Reco/test_newformat/dataCollection.djcdc'
@@ -247,6 +359,10 @@ if __name__ == '__main__':
     model2 = '/Data/ML4Reco/preselection_model/KERAS_check_model_block_5_epoch_150.h5'
 
     cplot = ComparisonPlotter(model1=model1, model2=model2, dc1=data1, dc2=data2)
-    cplot.process(Nfiles=1, nsteps=1)
+    cplot.process(Nfiles=1, nsteps=2)
 
-    fig, (ax1, ax2) = cplot.energy_distribution(title1='Some title', title2='Another title')
+    # fig, (ax1, ax2) = cplot.energy_distribution(title1='Some title', title2='Another title')
+    # fig, (ax1, ax2) = cplot.resolution_plots()
+    # plt.savefig('/Data/ML4Reco/Plots/resolutions.png')
+    fig, (ax, axt) = cplot.matched_showers()
+    plt.savefig('/Data/ML4Reco/Plots/showers.png')
