@@ -1,14 +1,17 @@
 import os
 import time
 
+import numpy as np
 import pandas as pd
+import tensorflow as tf
 
 from DeepJetCore.DataCollection import DataCollection
 from DeepJetCore.dataPipeline import TrainDataGenerator
 
 from OCHits2Showers import OCHits2ShowersLayer, process_endcap, OCGatherEnergyCorrFac
 from ShowersMatcher import ShowersMatcher
-from datastructures.TrainData_NanoML import TrainData_NanoML, TrainData_PreselectionNanoML
+from datastructures.TrainData_NanoML import TrainData_NanoML
+from datastructures.TrainData_PreselectionNanoML import TrainData_PreselectionNanoML
 from DeepJetCore.modeltools import load_model
 from datastructures import TrainData_TrackML
 
