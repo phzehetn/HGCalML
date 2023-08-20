@@ -2127,6 +2127,9 @@ class LLFullObjectCondensation(LossLayerBase):
                  spect_supp=1.
             )
         #### the latter needs to be cleaned up
+        
+        if use_energy_weights:
+            raise ValueError("Potential issues with the use_energy_weights switch, keep to False.")
 
         self.energy_loss_weight = energy_loss_weight
         self.use_energy_weights = use_energy_weights

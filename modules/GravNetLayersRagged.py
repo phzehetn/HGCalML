@@ -1314,11 +1314,11 @@ class SignedScaledGooeyBatchNorm(ScaledGooeyBatchNorm):
 
 class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
     def __init__(self,
-                 viscosity=0.01,
+                 viscosity=0.05,
                  fluidity_decay=1e-4,
-                 max_viscosity=0.99999,
+                 max_viscosity=0.99999999,
                  no_gaus = True,
-                 epsilon=1e-2,
+                 epsilon=1e-4,
                  invert_condition=False,
                  _promptnames=None, #compatibility, does nothing
                  record_metrics=False, #compatibility, does nothing
@@ -3576,8 +3576,10 @@ class CollectNeighbourAverageAndMax(tf.keras.layers.Layer):
         Simply accumulates all neighbour index information (including self if in the neighbour indices)
         Output will be divded by K, but not explicitly averaged if the number of neighbours is <K for
         particular vertices
+        
+        Basically the gravnet aggregation operation in an individual layer
 
-        Inputs:  data, idxs
+        Inputs:  data, nidxs, distsq
         '''
         super(CollectNeighbourAverageAndMax, self).__init__(**kwargs)
 
@@ -3585,8 +3587,9 @@ class CollectNeighbourAverageAndMax(tf.keras.layers.Layer):
         return (input_shapes[0][0],2*input_shapes[0][-1])
 
     def call(self, inputs):
-        x, idxs = inputs
-        f,_ = AccumulateKnn(tf.cast(idxs*0, tf.float32),  x, idxs)
+        assert len(inputs) == 3
+        x, neighbor_indices, distancesq = inputs
+        f,_ = AccumulateKnn(10.*distancesq,  x, neighbor_indices)
         return tf.reshape(f, [-1,2*x.shape[-1]])
 
 
