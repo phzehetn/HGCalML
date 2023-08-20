@@ -8,5 +8,7 @@ export PYTHONPATH=$HGCALML/modules:$PYTHONPATH
 export LD_LIBRARY_PATH=$HGCALML/modules:$LD_LIBRARY_PATH
 export LC_ALL=C.UTF-8 	# necessary for wandb
 export LANG=C.UTF-8	# necessary for wandb
+
+
 #?export PYTHONPATH=$HGCALML/modules/datastructures:$PYTHONPATH
 #for ffmpeg
