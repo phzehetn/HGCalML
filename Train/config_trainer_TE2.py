@@ -178,7 +178,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
             xgn_track, gncoords_track, *_ = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n']//4 + 1, [64, 32, 16],
                                                        N_CLUSTER_SPACE_COORDINATES, name = "TEGN_block_track_{i}")
 
-            [xgn, gncoords], rs  = ConcatRaggedTensors()([
+            [xgn, gncoords], _  = ConcatRaggedTensors()([
                 [xgn_track, gncoords_track],
                 [xgn_hit, gncoords_hit],
                 rs_track, rs_hit])
