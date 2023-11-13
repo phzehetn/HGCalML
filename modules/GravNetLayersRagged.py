@@ -3766,7 +3766,7 @@ class TranslationInvariantMP(tf.keras.layers.Layer):
 
     def compute_output_shape(self, inputs_shapes):
         fshape = inputs_shapes[0][-1]
-        return (None, fshape + sum(self.n_feature_transformation))
+        return (None, sum(self.n_feature_transformation))
 
 
     def get_config(self):
@@ -3780,27 +3780,35 @@ class TranslationInvariantMP(tf.keras.layers.Layer):
     def create_output_features(self, x, neighbour_indices, distancesq):
         allfeat = []
         features = x
+        K = tf.cast(neighbour_indices.shape[1], 'float32')
 
         for i in range(len(self.n_feature_transformation)):
-            t = self.feature_tranformation_dense[i]
-            features = t(features)
+            
             prev_feat = features
+
+            #add a 1 to the features for translation invariance later
+            if i==0:
+                ones = tf.ones_like(features[:,0:1])
+                features = tf.concat([ones, features], axis=-1)
+
             # Standard Message Passing
             features = AccumulateKnn(
                 10.*distancesq,
                 features,
                 neighbour_indices,
-                mean_and_max=False)[0]
-            # `self` is part of the neighbours, so we need to remove it
-            # Its distance weight is one as exp(0) = 1
-            # features -= prev_feat # Not needed as this is substracted three lines down
-            ones = tf.ones_like(features)
-            minus_xi = AccumulateKnn(10. * distancesq, ones, neighbour_indices, mean_and_max=False)[0]
-            # prev_feat * minus_xi -> x_i / K \Sum(d_ij * 1)
-            features -= neighbour_indices.shape[1] * prev_feat * minus_xi
+                mean_and_max=False)[0] * K
+
+            # this is only necessary for the first exchange, afterwards the features are already translation independent
+            if i==0:
+                minus_xi = features[:,0:1]
+                features = features[:,1:]
+                features -= prev_feat * minus_xi
+
+            t = self.feature_tranformation_dense[i]
+            features = t(features / K) #divide by K here again
             allfeat.append(features)
 
-        features = tf.concat(allfeat + [x], axis=-1)
+        features = tf.concat(allfeat, axis=-1)
         return features
 
 

@@ -105,6 +105,15 @@ wandb.save(sys.argv[1]) # Save config file
 ### Define Model ##############################################################
 ###############################################################################
 
+def TEGN_block(x, rs, N_coords):
+    x_pre = x
+    coords = Dense(N_coords)(x)
+    nidx, distsq = KNN(K=16)([coords, rs])
+    x = TranslationInvariantMP([64, 32, 16], activation='elu')([x, nidx, distsq])
+    x = Dense(x_pre.shape[-1], activation='elu')(x)
+    return Add()([x, x_pre])
+
+
 
 def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
     """
