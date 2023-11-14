@@ -1322,6 +1322,7 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
                  invert_condition=False,
                  _promptnames=None, #compatibility, does nothing
                  record_metrics=False, #compatibility, does nothing
+                 learn = False,
                  **kwargs):
         '''
         Input features (or [features, condition]), output: normed features
@@ -1350,6 +1351,7 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         self.epsilon = epsilon
         self.no_gaus = no_gaus
         self.invert_condition = invert_condition
+        self.learn = learn
 
     def compute_output_shape(self, input_shapes):
         #return input_shapes[0]
@@ -1363,7 +1365,8 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
                   'max_viscosity': self.max_viscosity,
                   'epsilon': self.epsilon,
                   'no_gaus': self.no_gaus,
-                  'invert_condition': self.invert_condition
+                  'invert_condition': self.invert_condition,
+                  'learn': self.learn
                   }
         base_config = super(ScaledGooeyBatchNorm2, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -1383,9 +1386,9 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
                                     initializer = 'ones', trainable = self.trainable)
 
         self.mean = self.add_weight(name = 'mean',shape = shape,
-                                    initializer = 'zeros', trainable =  False)
+                                    initializer = 'zeros', trainable =  self.learn and self.trainable)
         self.den = self.add_weight(name = 'den',shape = shape,
-                                    initializer = 'ones', trainable =  False)
+                                    initializer = 'ones', trainable =  self.learn and self.trainable)
         self.viscosity = tf.Variable(initial_value=self.viscosity_init,
                                          name='viscosity',
                                          trainable=False,dtype='float32')
@@ -1450,14 +1453,16 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         if not self.no_gaus:
             x_std = tf.sqrt(x_std + self.epsilon)
 
-
-        update = self._calc_update(self.mean,x_m,training)
-        tf.keras.backend.update(self.mean, update)
-
-        update = self._calc_update(self.den,x_std,training)
-        tf.keras.backend.update(self.den, update)
-
-        self._update_viscosity(training)
+        if self.learn:
+            self.add_loss( tf.reduce_mean( (self.mean-x_m)**2 +  (self.den-x_std)**2 ))
+        else:
+            update = self._calc_update(self.mean,x_m,training)
+            tf.keras.backend.update(self.mean, update)
+    
+            update = self._calc_update(self.den,x_std,training)
+            tf.keras.backend.update(self.den, update)
+    
+            self._update_viscosity(training)
 
         out = self._calc_out(x_in, cond)
 

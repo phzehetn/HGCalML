@@ -43,7 +43,6 @@ from callbacks import plotClusteringDuringTraining
 from callbacks import plotClusterSummary
 from callbacks import NanSweeper, DebugPlotRunner
 
-
 ####################################################################################################
 ### Load Configuration #############################################################################
 ####################################################################################################
@@ -65,6 +64,10 @@ BATCHNORM_OPTIONS = config['BatchNormOptions']
 DENSE_ACTIVATION = config['DenseOptions']['activation']
 DENSE_REGULARIZER = tf.keras.regularizers.l2(config['DenseOptions']['kernel_regularizer_rate'])
 DROPOUT = config['DenseOptions']['dropout']
+
+
+RECORD_FREQUENCY = 3
+PLOT_FREQUENCY = 40
 
 wandb_config = {
     "loss_implementation"           :   config['General']['oc_implementation'],
@@ -119,7 +122,7 @@ def TEGN_block(x, rs,
 
 
 
-def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
+def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENCY*PLOT_FREQUENCY):
     """
     Function that defines the model to train
     """
@@ -138,6 +141,26 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
     energy = pre_processed['rechit_energy']
     t_idx = pre_processed['t_idx']
     x = pre_processed['features']
+
+    x = ScaledGooeyBatchNorm2(
+            fluidity_decay=0.01,
+            max_viscosity=0.999999,
+            learn=True,
+            no_gaus=False)([x, is_track])
+
+    x = ScaledGooeyBatchNorm2(
+            fluidity_decay=0.01,
+            max_viscosity=0.999999,
+            invert_condition=True,
+            learn=True,
+            no_gaus=False)([x, is_track])
+
+    c_coords = prime_coords
+    c_coords = ScaledGooeyBatchNorm2(
+        name='batchnorm_ccoords',
+        fluidity_decay=0.01,
+        max_viscosity=0.999999)(c_coords)
+    
 
     c_coords = PlotCoordinates(
         plot_every=plot_debug_every,
@@ -164,19 +187,19 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
         d_shape = x.shape[1]//2
         x = Dense(d_shape,activation=DENSE_ACTIVATION,
             kernel_regularizer=DENSE_REGULARIZER)(x)
-        x = Dense(d_shape,activation=DENSE_ACTIVATION,
+        x = Dense(d_shape*2,activation=DENSE_ACTIVATION,
             kernel_regularizer=DENSE_REGULARIZER)(x)
         x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
 
-        if i in (0, range(GRAVNET_ITERATIONS)-1):
+        if GRAVNET_ITERATIONS-1: # last time
             x_hit, x_track, rs_hit, rs_track = SplitOffTracks()([is_track, [x], rs])
             x_hit = x_hit[0]
             x_track = x_track[0]
 
-            xgn_hit, gncoords_hit, *_ = TEGN_block(x_hit, rs_hit, config['General']['gravnet'][i]['n'], [64, 32, 16], 
-                                                   N_CLUSTER_SPACE_COORDINATES, name = "TEGN_block_hit_{i}")
+            xgn_hit, gncoords_hit, *_ = TEGN_block(x_hit, rs_hit, config['General']['gravnet'][i]['n'], [64,64,64,64,16,16,8,8], 
+                                                   N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_hit_{i}")
             xgn_track, gncoords_track, *_ = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n']//4 + 1, [64, 32, 16],
-                                                       N_CLUSTER_SPACE_COORDINATES, name = "TEGN_block_track_{i}")
+                                                       N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_track_{i}")
 
             [xgn, gncoords], _  = ConcatRaggedTensors()([
                 [xgn_track, gncoords_track],
@@ -184,8 +207,8 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
                 rs_track, rs_hit])
 
         else:
-            xgn, gncoords, gnidx, gndist = TEGN_block(x, rs, config['General']['gravnet'][i]['n'], [64, 32, 16],
-                                                       N_CLUSTER_SPACE_COORDINATES, name = "TEGN_block_common_{i}")
+            xgn, gncoords, gnidx, gndist = TEGN_block(x, rs, config['General']['gravnet'][i]['n'], [64,64,64,64,16,16,8,8],
+                                                       N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_common_{i}")
 
         # gndist = StopGradient()(gndist)
         gncoords = StopGradient()(gncoords)
@@ -196,6 +219,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
             )([gncoords, energy, t_idx, rs])
 
         x = Concatenate()([xgn, gncoords])
+        x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
         x = Dense(d_shape,
                   name=f"dense_post_gravnet_1_iteration_{i}",
                   activation=DENSE_ACTIVATION,
@@ -240,7 +264,10 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
     pred_beta, pred_ccoords, pred_dist, \
         pred_energy_corr, pred_energy_low_quantile, pred_energy_high_quantile, \
         pred_pos, pred_time, pred_time_unc, pred_id = \
-        create_outputs(x, n_ccoords=N_CLUSTER_SPACE_COORDINATES, fix_distance_scale=True)
+        create_outputs(x, n_ccoords=N_CLUSTER_SPACE_COORDINATES, fix_distance_scale=True,
+                is_track=is_track,
+                set_track_betas_to_one=True
+                )
 
     # pred_ccoords = LLFillSpace(maxhits=2000, runevery=5, scale=0.01)([pred_ccoords, rs, t_idx])
 
@@ -253,6 +280,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
                                              use_energy_weights=True,
                                              record_metrics=True,
                                              print_loss=True,
+                                             print_time=True,
                                              name="ExtendedOCLoss",
                                              implementation = loss_implementation,
                                              **LOSS_OPTIONS)(
@@ -313,8 +341,6 @@ if not train.modelSet():
 samplepath = train.val_data.getSamplePath(train.val_data.samples[0])
 PUBLISHPATH = ""
 PUBLISHPATH += [d  for d in train.outputDir.split('/') if len(d)][-1]
-RECORD_FREQUENCY = 10
-PLOT_FREQUENCY = 40
 
 cb = [NanSweeper()] #this takes a bit of time checking each batch but could be worth it
 cb += [
@@ -349,6 +375,8 @@ cb += [
             # 'ExtendedOCLoss_time_pred_std',
             '*regularise_gravnet_*',
             '*_gravReg*',
+            '*containment*',
+            '*contamination*',
             ],
         publish=PUBLISHPATH #no additional directory here (scp cannot create one)
         ),
