@@ -1420,8 +1420,12 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
 
     def _calc_out(self, x_in, cond):
 
-        ngmean = tf.stop_gradient(self.mean)
-        ngden = tf.stop_gradient(self.den)
+        if self.learn:
+            ngmean = self.mean
+            ngden = self.den
+        else:
+            ngmean = tf.stop_gradient(self.mean)
+            ngden = tf.stop_gradient(self.den)
 
         out = (x_in - ngmean) / (tf.abs(ngden) + self.epsilon)
         out = out*self.gamma + self.bias
@@ -1440,7 +1444,10 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         if not self.trainable:
             return self._calc_out(x_in, cond)
 
-        x = tf.stop_gradient(x_in) #stop feat gradient
+        if self.learn:
+            x = x_in
+        else:
+            x = tf.stop_gradient(x_in) #stop feat gradient
         #x = x_in #maybe don't stop the gradient?
         x_m = self._calc_mean_and_protect(x, cond, self.mean)
 
