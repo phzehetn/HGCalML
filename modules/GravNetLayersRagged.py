@@ -1314,7 +1314,7 @@ class SignedScaledGooeyBatchNorm(ScaledGooeyBatchNorm):
 
 class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
     def __init__(self,
-                 viscosity=0.01,
+                 viscosity=1e-9,#start at almost zero
                  fluidity_decay=1e-4,
                  max_viscosity=0.99999,
                  no_gaus = True,
@@ -1323,6 +1323,7 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
                  _promptnames=None, #compatibility, does nothing
                  record_metrics=False, #compatibility, does nothing
                  learn = False,
+                 no_bias_gamma = False,
                  **kwargs):
         '''
         Input features (or [features, condition]), output: normed features
@@ -1352,6 +1353,7 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         self.no_gaus = no_gaus
         self.invert_condition = invert_condition
         self.learn = learn
+        self.no_bias_gamma = no_bias_gamma
 
     def compute_output_shape(self, input_shapes):
         #return input_shapes[0]
@@ -1366,7 +1368,8 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
                   'epsilon': self.epsilon,
                   'no_gaus': self.no_gaus,
                   'invert_condition': self.invert_condition,
-                  'learn': self.learn
+                  'learn': self.learn,
+                  'no_bias_gamma': self.no_bias_gamma
                   }
         base_config = super(ScaledGooeyBatchNorm2, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -1381,10 +1384,10 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
             shape = (1,)+input_shapes[1:]
 
         self.bias = self.add_weight(name = 'bias',shape = shape,
-                                    initializer = 'zeros', trainable = self.trainable)
+                                    initializer = 'zeros', trainable = self.trainable and not self.no_bias_gamma)
         self.gamma = self.add_weight(name = 'gamma',shape = shape,
-                                    initializer = 'ones', trainable = self.trainable)
-
+                                    initializer = 'ones', trainable = self.trainable and not self.no_bias_gamma)
+    
         self.mean = self.add_weight(name = 'mean',shape = shape,
                                     initializer = 'zeros', trainable =  self.learn and self.trainable)
         self.den = self.add_weight(name = 'den',shape = shape,
@@ -1406,6 +1409,8 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         return x
 
     def _calc_update(self, old, new, training, visc=None):
+        if not self.trainable:
+            return old
         if visc is None:
             visc = self.viscosity
         delta = new-old
@@ -1413,6 +1418,8 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         return tf.keras.backend.in_train_phase(update,old,training=training)
 
     def _update_viscosity(self, training):
+        if not self.trainable:
+            return
         if self.fluidity_decay > 0:
             newvisc = self.viscosity + (self.max_viscosity - self.viscosity)*self.fluidity_decay
             newvisc = tf.keras.backend.in_train_phase(newvisc,self.viscosity,training=training)
@@ -1425,15 +1432,14 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
 
         out = (x_in - ngmean) / (tf.abs(ngden) + self.epsilon)
         out = out*self.gamma + self.bias
-        if self.invert_condition:
-            return tf.where(cond<=0.5,  out, x_in)
-        else:
-            return tf.where(cond>0.5,  out, x_in)
+        return tf.where(cond>0.5,  out, x_in)
 
     def call(self, inputs, training=None):
         if isinstance(inputs,list):
             x_in, cond = inputs
             cond = tf.where(cond > 0.5, tf.ones_like(cond), 0.) #make sure it's ones and zeros
+            if self.invert_condition:
+                cond = 1.-cond
         else:
             x_in = inputs
             cond = tf.ones_like(x_in[...,0:1])
@@ -1449,10 +1455,11 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
             diff_to_mean = diff_to_mean**2
 
         x_std = self._calc_mean_and_protect(diff_to_mean, cond, self.den)
-
+        
         if not self.no_gaus:
             x_std = tf.sqrt(x_std + self.epsilon)
 
+        #tf.print(self.name, 'p_loss',p_loss, tf.reduce_mean(self.mean), tf.reduce_mean(self.den))
         if self.learn:
             p_loss = tf.reduce_mean( (self.mean-x_m)**2 +  (self.den-x_std)**2 )
             self.add_loss(p_loss)

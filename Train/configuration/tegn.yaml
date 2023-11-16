@@ -2,10 +2,11 @@ General:
   oc_implementation: 'hinge'
   gravnet:
     - n: 64
+    - n: 32
     - n: 64
-    - n: 64
-  n_cluster_space_coordinates: 3
-  n_gravnet_space_coordinates: 3
+    - n: 32
+  n_cluster_space_coordinates: 8
+  n_gravnet_space_coordinates: 5
 
 DenseOptions:
   activation: "elu"
@@ -13,8 +14,9 @@ DenseOptions:
   dropout: 0.000001
 
 BatchNormOptions:
+  fluidity_decay: 0.1 # go fast to 0.5
   max_viscosity: 0.5
-  learn: True
+  learn: False
 
 LossOptions:
   energy_loss_weight: .00
@@ -31,7 +33,7 @@ Training:
   - stage_1:
     batch_size: 70000
     learning_rate: 0.001
-    epochs: 1
+    epochs: 10
 
   - stage_2:
     batch_size: 120000
