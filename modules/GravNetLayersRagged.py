@@ -1420,12 +1420,8 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
 
     def _calc_out(self, x_in, cond):
 
-        if self.learn:
-            ngmean = self.mean
-            ngden = self.den
-        else:
-            ngmean = tf.stop_gradient(self.mean)
-            ngden = tf.stop_gradient(self.den)
+        ngmean = tf.stop_gradient(self.mean)
+        ngden = tf.stop_gradient(self.den)
 
         out = (x_in - ngmean) / (tf.abs(ngden) + self.epsilon)
         out = out*self.gamma + self.bias
@@ -1444,14 +1440,11 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         if not self.trainable:
             return self._calc_out(x_in, cond)
 
-        if self.learn:
-            x = x_in
-        else:
-            x = tf.stop_gradient(x_in) #stop feat gradient
+        x = tf.stop_gradient(x_in) #stop feat gradient
         #x = x_in #maybe don't stop the gradient?
         x_m = self._calc_mean_and_protect(x, cond, self.mean)
 
-        diff_to_mean = tf.abs(x - self.mean) #self.mean or x_m
+        diff_to_mean = tf.abs(x - x_m) #self.mean) #self.mean or x_m -> self.mean over-corrects
         if not self.no_gaus:
             diff_to_mean = diff_to_mean**2
 
@@ -1461,7 +1454,8 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
             x_std = tf.sqrt(x_std + self.epsilon)
 
         if self.learn:
-            self.add_loss( tf.reduce_mean( (self.mean-x_m)**2 +  (self.den-x_std)**2 ))
+            p_loss = tf.reduce_mean( (self.mean-x_m)**2 +  (self.den-x_std)**2 )
+            self.add_loss(p_loss)
         else:
             update = self._calc_update(self.mean,x_m,training)
             tf.keras.backend.update(self.mean, update)
