@@ -79,6 +79,12 @@ global_layers_list['MixWhere']=MixWhere
 from GravNetLayersRagged import ValAndSign
 global_layers_list['ValAndSign']=ValAndSign
 
+from GravNetLayersRagged import SelectTracks
+global_layers_list['SelectTracks']=SelectTracks
+
+from GravNetLayersRagged import ScatterBackTracks
+global_layers_list['ScatterBackTracks']=ScatterBackTracks
+
 from GravNetLayersRagged import SplitOffTracks
 global_layers_list['SplitOffTracks']=SplitOffTracks
 

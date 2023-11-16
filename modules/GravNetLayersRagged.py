@@ -402,6 +402,67 @@ class ValAndSign(tf.keras.layers.Layer):
         v = tf.abs(inputs)
         return tf.concat([s,v],axis=-1)
 
+class SelectTracks(tf.keras.layers.Layer):
+    def __init__(self, return_rs=True, **kwargs):
+        '''
+        This layer simply selects the tracks from a tensor
+
+        inputs:
+        - A: track identifier (non-zero for tracks)
+        - B: a tensor
+        - C: row splits
+
+        Outputs:
+        - selected tracks
+        - original indices of tracks
+        - row splits (if option is set)
+        '''
+        super(SelectTracks, self).__init__(**kwargs)
+        self.return_rs = return_rs
+    def call(self, inputs):
+        assert len(inputs) == 3
+        istrack, a_in, rs = inputs
+
+        # create indices for each axis=0 element
+        ridxs = tf.range(tf.shape(a_in)[0])[..., tf.newaxis]
+        # select those indices that are tracks
+        tidx = tf.boolean_mask(ridxs, istrack>0)
+        # select the track properties in the tensor a
+        a = tf.gather(a_in, tidx, axis=0)
+        a = tf.reshape(a, [-1, a_in.shape[1]])#for defined output shape
+
+        if self.return_rs:
+            ristrack = tf.RaggedTensor.from_row_splits(istrack,rs)
+            rs = tf.reduce_sum(tf.cast(ristrack, 'int32'),axis=1)
+            rs = rs[:,0]
+            rs = tf.concat([tf.constant([0],dtype='int32'),rs],axis=0)
+            return a, tidx, rs
+        
+        return a, tidx
+
+class ScatterBackTracks(tf.keras.layers.Layer):
+    def __init__(self, **kwargs):
+        '''
+        This layer scatters back the tracks into a tensor
+
+        inputs:
+        - A: track identifier (non-zero for tracks) - used for size
+        - B: a tensor
+        - C: indices of tracks
+
+        Outputs:
+        - scattered back tracks, padded with zeros
+        '''
+        super(ScatterBackTracks, self).__init__(**kwargs)
+
+    def call(self, inputs):
+        istrack, a_in, tidx = inputs
+        # take the indices and scatter back to a tensor of size istrack and otherwise shape of a
+        # this will scatter the tracks back to their original position
+        a = tf.scatter_nd(tidx[...,tf.newaxis], a_in, (tf.shape(istrack)[0], tf.shape(a_in)[1]))
+        a = tf.reshape(a, [-1, a_in.shape[1]])#for defined output shape
+        return a
+
 
 class SplitOffTracks(tf.keras.layers.Layer):
 
@@ -1455,7 +1516,7 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
             diff_to_mean = diff_to_mean**2
 
         x_std = self._calc_mean_and_protect(diff_to_mean, cond, self.den)
-        
+
         if not self.no_gaus:
             x_std = tf.sqrt(x_std + self.epsilon)
 

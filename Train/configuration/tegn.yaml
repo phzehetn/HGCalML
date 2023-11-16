@@ -4,7 +4,6 @@ General:
     - n: 64
     - n: 32
     - n: 64
-    - n: 32
   n_cluster_space_coordinates: 8
   n_gravnet_space_coordinates: 5
 
