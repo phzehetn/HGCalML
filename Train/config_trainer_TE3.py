@@ -27,7 +27,7 @@ from Layers import LLFillSpace
 from Layers import LLExtendedObjectCondensation
 from Layers import DictModel, KNN
 from Layers import RaggedGlobalExchange
-from Layers import SphereActivation
+from Layers import SphereActivation, RandomOnes
 from Layers import Multi
 from Layers import ShiftDistance
 from Layers import LLRegulariseGravNetSpace
@@ -97,7 +97,7 @@ for i in range(len(config['Training'])):
         wandb_config[f"train_{i}+_fluidity_decay"] = 0.1
 
 wandb.init(
-    project="playground",
+    project="jans_new_playground",
     config=wandb_config,
 )
 wandb.save(sys.argv[0]) # Save python file
@@ -110,6 +110,7 @@ wandb.save(sys.argv[1]) # Save config file
 
 USE_BATCHNORM=False
 USE_KERAS_BATCHNORM=True
+USE_RANDOM=True
 
 def TEGN_block(x, rs, 
                K : int,
@@ -206,14 +207,11 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
 
     gravnet_regs = [0.01, 0.01, 0.01, 0.01, 0.01]
 
-    complexity=4
     rs_track, tridx = None, None
 
     for i in range(GRAVNET_ITERATIONS):
 
         d_shape = x.shape[1]//2
-        x = Dense(d_shape,activation=DENSE_ACTIVATION,
-            kernel_regularizer=DENSE_REGULARIZER)(x)
         x = Dense(d_shape,activation=DENSE_ACTIVATION,
             kernel_regularizer=DENSE_REGULARIZER)(x)
         if USE_BATCHNORM:
@@ -222,19 +220,23 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
             else:
                 x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
  
+        use_is_track = is_track
         if rs_track is None:
-            x_track,tridx,rs_track = SelectTracks(return_rs = True)([is_track, x, rs])
+            if USE_RANDOM:
+                use_is_track = RandomOnes(0.02)(rs)
+                use_is_track = tf.keras.layers.Add()([use_is_track, is_track])#also keep tracks
+            x_track,tridx,rs_track = SelectTracks(return_rs = True)([use_is_track, x, rs])
         else:
             x_track = SelectTracks()([tridx, x])#track rs don't change, indices also the same, use only in selector mode
 
-        xgn_track, *_ = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n'], 8*[64], #cheap
+        xgn_track, *_ = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n'], 6*[32], #cheap
                                                        N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_track_{i}")
         
-        xgn_track = ScatterBackTracks()([is_track, xgn_track, tridx])
+        xgn_track = ScatterBackTracks()([use_is_track, xgn_track, tridx])
         x = Concatenate()([xgn_track, x])#now there will be zeros in places where there are no tracks
         
         #for everything
-        xgn, gncoords, gnidx, gndist = TEGN_block(x, rs, config['General']['gravnet'][i]['n'], complexity*[32], 
+        xgn, gncoords, gnidx, gndist = TEGN_block(x, rs, config['General']['gravnet'][i]['n'], 6*[32], 
                                                        N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_common_{i}")
 
         # gndist = StopGradient()(gndist)
@@ -253,10 +255,6 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
                 x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
         x = Dense(d_shape,
                   name=f"dense_post_gravnet_1_iteration_{i}",
-                  activation=DENSE_ACTIVATION,
-                  kernel_regularizer=DENSE_REGULARIZER)(x)
-        x = Dense(d_shape,
-                  name=f"dense_post_gravnet_2_iteration_{i}",
                   activation=DENSE_ACTIVATION,
                   kernel_regularizer=DENSE_REGULARIZER)(x)
 

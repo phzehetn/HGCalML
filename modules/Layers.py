@@ -85,6 +85,9 @@ global_layers_list['SelectTracks']=SelectTracks
 from GravNetLayersRagged import ScatterBackTracks
 global_layers_list['ScatterBackTracks']=ScatterBackTracks
 
+from GravNetLayersRagged import RandomOnes
+global_layers_list['RandomOnes']=RandomOnes
+
 from GravNetLayersRagged import SplitOffTracks
 global_layers_list['SplitOffTracks']=SplitOffTracks
 

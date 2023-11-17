@@ -479,6 +479,30 @@ class ScatterBackTracks(tf.keras.layers.Layer):
         a = tf.reshape(a, [-1, a_in.shape[1]])#for defined output shape
         return a
 
+class RandomOnes(tf.keras.layers.Layer):
+    def __init__(self, fraction, **kwargs):
+        '''
+        This layer creates a random mask of ones and zeros
+
+        inputs:
+        - A: row splits
+
+        Outputs:
+        - random mask
+        '''
+        super(RandomOnes, self).__init__(**kwargs)
+        self.fraction = fraction
+
+    def get_config(self):
+        base_config = super(RandomOnes, self).get_config()
+        return dict(list(base_config.items()) + list({'fraction': self.fraction}.items()))
+    
+    def call(self, inputs):
+        rs = inputs
+        f = tf.random.uniform(shape=(rs[-1],1), minval=0, maxval=1) < self.fraction
+        f = tf.cast(f, 'float32')
+        return f
+
 
 class SplitOffTracks(tf.keras.layers.Layer):
 
