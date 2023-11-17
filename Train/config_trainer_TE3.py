@@ -66,8 +66,8 @@ DENSE_REGULARIZER = tf.keras.regularizers.l2(config['DenseOptions']['kernel_regu
 DROPOUT = config['DenseOptions']['dropout']
 
 
-RECORD_FREQUENCY = 3
-PLOT_FREQUENCY = 40
+RECORD_FREQUENCY = 10
+PLOT_FREQUENCY = 80
 
 wandb_config = {
     "loss_implementation"           :   config['General']['oc_implementation'],
@@ -213,14 +213,14 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
             kernel_regularizer=DENSE_REGULARIZER)(x)
         x = Dense(d_shape,activation=DENSE_ACTIVATION,
             kernel_regularizer=DENSE_REGULARIZER)(x)
-        x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
+        #x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
  
         if rs_track is None:
             x_track,tridx,rs_track = SelectTracks(return_rs = True)([is_track, x, rs])
         else:
             x_track,tridx = SelectTracks(return_rs=False)([is_track, x, rs])#track rs don't change
 
-        xgn_track, *_ = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n'], complexity*[16], #cheap
+        xgn_track, *_ = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n'], 8*[64], #cheap
                                                        N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_track_{i}")
         
         xgn_track = ScatterBackTracks()([is_track, xgn_track, tridx])
@@ -239,7 +239,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
             )([gncoords, energy, t_idx, rs])
 
         x = Concatenate()([xgn, gncoords])
-        x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
+        #x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
         x = Dense(d_shape,
                   name=f"dense_post_gravnet_1_iteration_{i}",
                   activation=DENSE_ACTIVATION,
@@ -249,9 +249,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
                   activation=DENSE_ACTIVATION,
                   kernel_regularizer=DENSE_REGULARIZER)(x)
 
-        x = ScaledGooeyBatchNorm2(
-            name=f"batchnorm_loop1_iteration_{i}",
-            **BATCHNORM_OPTIONS)(x)
+        #x = ScaledGooeyBatchNorm2(name=f"batchnorm_loop1_iteration_{i}",**BATCHNORM_OPTIONS)(x)
 
         allfeat.append(x)
 
@@ -277,9 +275,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
               name=f"dense_final_{3}",
               activation=DENSE_ACTIVATION,
               kernel_regularizer=DENSE_REGULARIZER)(x)
-    x = ScaledGooeyBatchNorm2(
-        name=f"batchnorm_final",
-        **BATCHNORM_OPTIONS)(x)
+    #x = ScaledGooeyBatchNorm2(name=f"batchnorm_final",**BATCHNORM_OPTIONS)(x)
 
     pred_beta, pred_ccoords, pred_dist, \
         pred_energy_corr, pred_energy_low_quantile, pred_energy_high_quantile, \
