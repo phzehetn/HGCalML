@@ -108,6 +108,9 @@ wandb.save(sys.argv[1]) # Save config file
 ### Define Model ##############################################################
 ###############################################################################
 
+USE_BATCHNORM=False
+USE_KERAS_BATCHNORM=True
+
 def TEGN_block(x, rs, 
                K : int,
                trfs :list, 
@@ -204,7 +207,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
     gravnet_regs = [0.01, 0.01, 0.01, 0.01, 0.01]
 
     complexity=4
-    rs_track = None
+    rs_track, tridx = None, None
 
     for i in range(GRAVNET_ITERATIONS):
 
@@ -213,12 +216,16 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
             kernel_regularizer=DENSE_REGULARIZER)(x)
         x = Dense(d_shape,activation=DENSE_ACTIVATION,
             kernel_regularizer=DENSE_REGULARIZER)(x)
-        #x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
+        if USE_BATCHNORM:
+            if USE_KERAS_BATCHNORM:
+                x = tf.keras.layers.BatchNormalization()(x)
+            else:
+                x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
  
         if rs_track is None:
             x_track,tridx,rs_track = SelectTracks(return_rs = True)([is_track, x, rs])
         else:
-            x_track,tridx = SelectTracks(return_rs=False)([is_track, x, rs])#track rs don't change
+            x_track = SelectTracks()([tridx, x])#track rs don't change, indices also the same, use only in selector mode
 
         xgn_track, *_ = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n'], 8*[64], #cheap
                                                        N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_track_{i}")
@@ -239,7 +246,11 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
             )([gncoords, energy, t_idx, rs])
 
         x = Concatenate()([xgn, gncoords])
-        #x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
+        if USE_BATCHNORM:
+            if USE_KERAS_BATCHNORM:
+                x = tf.keras.layers.BatchNormalization()(x)
+            else:
+                x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
         x = Dense(d_shape,
                   name=f"dense_post_gravnet_1_iteration_{i}",
                   activation=DENSE_ACTIVATION,
@@ -249,7 +260,11 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
                   activation=DENSE_ACTIVATION,
                   kernel_regularizer=DENSE_REGULARIZER)(x)
 
-        #x = ScaledGooeyBatchNorm2(name=f"batchnorm_loop1_iteration_{i}",**BATCHNORM_OPTIONS)(x)
+        if USE_BATCHNORM:
+            if USE_KERAS_BATCHNORM:
+                x = tf.keras.layers.BatchNormalization()(x)
+            else:
+                x = ScaledGooeyBatchNorm2(name=f"batchnorm_loop1_iteration_{i}",**BATCHNORM_OPTIONS)(x)
 
         allfeat.append(x)
 
@@ -275,7 +290,11 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
               name=f"dense_final_{3}",
               activation=DENSE_ACTIVATION,
               kernel_regularizer=DENSE_REGULARIZER)(x)
-    #x = ScaledGooeyBatchNorm2(name=f"batchnorm_final",**BATCHNORM_OPTIONS)(x)
+    if USE_BATCHNORM:
+        if USE_KERAS_BATCHNORM:
+            x = tf.keras.layers.BatchNormalization()(x)
+        else:
+            x = ScaledGooeyBatchNorm2(name=f"batchnorm_final",**BATCHNORM_OPTIONS)(x)
 
     pred_beta, pred_ccoords, pred_dist, \
         pred_energy_corr, pred_energy_low_quantile, pred_energy_high_quantile, \
