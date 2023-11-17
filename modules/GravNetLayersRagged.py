@@ -408,9 +408,9 @@ class SelectTracks(tf.keras.layers.Layer):
         This layer simply selects the tracks from a tensor
 
         inputs:
-        - A: track identifier (non-zero for tracks)
+        - A: track identifier (non-zero for tracks), or indices of tracks if no rs provided
         - B: a tensor
-        - C: row splits
+        - C: row splits (if not provided, will act as simple selector, then return_rs also False)
 
         Outputs:
         - selected tracks
@@ -425,25 +425,36 @@ class SelectTracks(tf.keras.layers.Layer):
         return dict(list(base_config.items()) + list({'return_rs': self.return_rs}.items()))
 
     def call(self, inputs):
-        assert len(inputs) == 3
-        istrack, a_in, rs = inputs
+        assert len(inputs) == 3 or len(inputs) == 2
+        if len(inputs) == 3:
+            istrack, a_in, rs = inputs
+        elif len(inputs) == 2:
+            istrack, a_in = inputs
+            rs = None
+        
+        if len(inputs) == 3:
+            # create indices for each axis=0 element
+            ridxs = tf.range(tf.shape(a_in)[0])[..., tf.newaxis]
+            # select those indices that are tracks
+            tidx = tf.boolean_mask(ridxs, istrack>0)
+            # select the track properties in the tensor a
+        else:
+            tidx = istrack
 
-        # create indices for each axis=0 element
-        ridxs = tf.range(tf.shape(a_in)[0])[..., tf.newaxis]
-        # select those indices that are tracks
-        tidx = tf.boolean_mask(ridxs, istrack>0)
-        # select the track properties in the tensor a
         a = tf.gather(a_in, tidx, axis=0)
         a = tf.reshape(a, [-1, a_in.shape[1]])#for defined output shape
 
-        if self.return_rs:
-            ristrack = tf.RaggedTensor.from_row_splits(istrack,rs)
+        if self.return_rs and rs is not None:
+            ristrack = tf.RaggedTensor.from_row_splits(istrack>0,rs)
             rs = tf.reduce_sum(tf.cast(ristrack, 'int32'),axis=1)
             rs = rs[:,0]
             rs = tf.concat([tf.constant([0],dtype='int32'),rs],axis=0)
-            return a, tidx, rs
-        
-        return a, tidx
+            rs = tf.math.cumsum(rs,axis=0)
+            with tf.control_dependencies([tf.assert_equal(rs[-1], tf.shape(a)[0])]): #safety
+                return a, tidx, rs
+        if len(inputs) == 3:
+            return a, tidx
+        return a #only apply indices mode
 
 class ScatterBackTracks(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
