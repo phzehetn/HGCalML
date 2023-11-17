@@ -419,6 +419,11 @@ class SelectTracks(tf.keras.layers.Layer):
         '''
         super(SelectTracks, self).__init__(**kwargs)
         self.return_rs = return_rs
+
+    def get_config(self):
+        base_config = super(SelectTracks, self).get_config()
+        return dict(list(base_config.items()) + list({'return_rs': self.return_rs}.items()))
+
     def call(self, inputs):
         assert len(inputs) == 3
         istrack, a_in, rs = inputs
