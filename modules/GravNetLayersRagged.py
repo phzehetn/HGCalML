@@ -3853,11 +3853,17 @@ class TranslationInvariantMP(tf.keras.layers.Layer):
     def __init__(self,
                  n_feature_transformation,
                  activation='elu',
+                 mean=True,
+                 layer_norm = False,
+                 sum_weight=False,
                  **kwargs):
         super(TranslationInvariantMP, self).__init__(**kwargs)
 
         self.n_feature_transformation = n_feature_transformation
         self.activation = activation
+        self.mean = mean
+        self.layer_norm = layer_norm
+        self.sum_weight = sum_weight
         self.feature_tranformation_dense = []
         for i in range(len(self.n_feature_transformation)):
             with tf.name_scope(self.name + "/" + str(i)):
@@ -3886,6 +3892,9 @@ class TranslationInvariantMP(tf.keras.layers.Layer):
     def get_config(self):
         config = {'n_feature_transformation': self.n_feature_transformation,
                   'activation': self.activation,
+                  'mean': self.mean,
+                  'layer_norm': self.layer_norm,
+                  'sum_weight': self.sum_weight
         }
         base_config = super(TranslationInvariantMP, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -3898,25 +3907,36 @@ class TranslationInvariantMP(tf.keras.layers.Layer):
 
         for i in range(len(self.n_feature_transformation)):
             
+            if self.layer_norm:
+                features = tf.math.divide_no_nan(features, 
+                tf.sqrt(tf.reduce_sum(features**2, axis=-1, keepdims = True) + 1e-6 ) )
             prev_feat = features
 
-            #add a 1 to the features for translation invariance later
-            if i==0:
-                ones = tf.ones_like(features[:,0:1])
-                features = tf.concat([ones, features], axis=-1)
+            if self.mean:
+                #add a 1 to the features for translation invariance later
+                if i==0:
+                    ones = tf.ones_like(features[:,0:1])
+                    features = tf.concat([ones, features], axis=-1)
+    
+                # Standard Message Passing
+                features = AccumulateKnn(
+                    10.*distancesq,
+                    features,
+                    neighbour_indices,
+                    mean_and_max=False)[0] * K
+    
+                # this is only necessary for the first exchange, afterwards the features are already translation independent
+                if i==0:
+                    minus_xi = features[:,0:1]
+                    features = features[:,1:]
+                    features -= prev_feat * minus_xi
 
-            # Standard Message Passing
-            features = AccumulateKnn(
-                10.*distancesq,
-                features,
-                neighbour_indices,
-                mean_and_max=False)[0] * K
-
-            # this is only necessary for the first exchange, afterwards the features are already translation independent
-            if i==0:
-                minus_xi = features[:,0:1]
-                features = features[:,1:]
-                features -= prev_feat * minus_xi
+                if self.sum_weight:
+                    wsum = tf.math.divide_no_nan(K, tf.reduce_sum( tf.exp(-10.*distancesq), axis=1, keepdims=True) + 1e-3)
+                    features *= wsum
+            else: #max
+                nfeat = SelectWithDefault(neighbour_indices, features,-2.)
+                features = tf.reduce_max(tf.exp(-10.*distancesq) * nfeat - features[:,tf.newaxis,:], axis=1) * K
 
             t = self.feature_tranformation_dense[i]
             features = t(features / K) #divide by K here again
@@ -3930,6 +3950,56 @@ class TranslationInvariantMP(tf.keras.layers.Layer):
         x, neighbor_indices, distancesq = inputs
         return self.create_output_features(x, neighbor_indices, distancesq)
 
+
+class DWTICoordAttention(tf.keras.layers.Layer):
+
+    def __init__(self, n_heads, **kwargs):
+        '''
+        This layer will be hard on memory! But maybe ok on an 80gb A100
+
+        Inputs: 
+        - feat
+        - coords
+        - nidx
+        - distsq (from KNN)
+
+        '''
+        super(DWTICoordAttention, self).__init__(**kwargs)
+        self.n_heads = n_heads
+        with tf.name_scope(self.name + "/att"):
+            self.att_transform_a = tf.keras.layers.Dense(n_heads, activation='elu')
+            self.att_transform_b = tf.keras.layers.Dense(n_heads)
+
+    def get_config(self):
+        base_config = super(DistanceWeightedAttentionMP, self).get_config()
+        return dict(list(base_config.items()) + list({'n_heads': self.n_heads}.items()))
+
+    def build(self, input_shapes):
+        input_shape = input_shapes[1]
+        with tf.name_scope(self.name + "/att"):
+            self.att_transform_a.build(input_shape)
+            self.att_transform_b.build(input_shape)#same
+
+    def call(self,inputs):
+        assert len(inputs) == 4
+        feat, coords, nidx, distsq = inputs
+        rncoords = SelectWithDefault(nidx, coords, 0.) - coords[:,tf.newaxis,:]
+        # reshape for defined shape for dense
+        rncoords = tf.reshape(rncoords, [-1, rncoords.shape[1], coords.shape[1]])
+        # calc attention
+        a = self.att_transform_a(rncoords)
+        a = self.att_transform_b(a)
+        a = tf.nn.softmax(a, axis=1) #mind the axis V x K x A
+        # weight attention by GN like distance in addition
+        a = tf.exp(-10.*distsq) * a
+
+        #now the big one
+        rnfeat = SelectWithDefault(nidx, feat, 0.) - feat[:,tf.newaxis,:] # V x K x F
+        #now even bigger
+        arnfeat = a[:,:,:,tf.newaxis] * rnfeat[:,:,tf.newaxis,:] # V x K x A x F
+        fsum = tf.reduce_sum(arnfeat, axis=1) # V x A x F
+        #'concat'
+        return tf.reshape(fsum, [-1, self.n_heads * feat.shape[1]])
 
 class DistanceWeightedAttentionMP(DistanceWeightedMessagePassing):
     def __init__(self,

@@ -19,7 +19,7 @@ from DeepJetCore.DJCLayers import StopGradient, ScalarMultiply
 
 import training_base_hgcal
 from Layers import ScaledGooeyBatchNorm2
-from Layers import MixWhere
+from Layers import MixWhere, DummyLayer
 from Layers import RaggedGravNet
 from Layers import PlotCoordinates
 from Layers import DistanceWeightedMessagePassing, TranslationInvariantMP
@@ -109,8 +109,8 @@ wandb.save(sys.argv[1]) # Save config file
 ###############################################################################
 
 USE_BATCHNORM=False
-USE_KERAS_BATCHNORM=True
-USE_RANDOM=True
+USE_KERAS_BATCHNORM=False
+USE_RANDOM=False
 
 def TEGN_block(x, rs, 
                K : int,
@@ -121,7 +121,9 @@ def TEGN_block(x, rs,
     x_pre = x
     coords = Dense(N_coords, name = name+"_coords")(x)
     nidx, distsq = KNN(K=K)([coords, rs])
-    x = TranslationInvariantMP(trfs, activation='elu',name = name+ "_te_mp")([x, nidx, distsq])
+    x = TranslationInvariantMP(trfs, activation='elu',name = name+ "_te_mp", 
+                               layer_norm = True,
+                               sum_weight = True)([x, nidx, distsq])
     for i,e in enumerate(extra):
         x = Dense(e, activation='elu',name = name+ f"_extra_dense_{i}")(x)
     x = Dense(x_pre.shape[1], activation='elu',name = name+ "_out_dense")(x)
@@ -205,8 +207,6 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
     ### Loop over GravNet Layers ##############################################
     ###########################################################################
 
-    gravnet_regs = [0.01, 0.01, 0.01, 0.01, 0.01]
-
     rs_track, tridx = None, None
 
     for i in range(GRAVNET_ITERATIONS):
@@ -229,9 +229,19 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
         else:
             x_track = SelectTracks()([tridx, x])#track rs don't change, indices also the same, use only in selector mode
 
-        xgn_track, *_ = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n'], 6*[32], #cheap
+        #for regularisation
+        pc_track = SelectTracks()([tridx, prime_coords])
+
+        xgn_track, gncoords, gnidx, gndist = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n'], 6*[32], #cheap
                                                        N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_track_{i}")
         
+        #regularise
+        gndist = LLRegulariseGravNetSpace(
+                    scale=0.01,record_metrics=True,
+                    name=f'regularise_gravnet_tracks_{i}')([gndist, pc_track, gnidx])
+        x = DummyLayer()([x,gndist])#make sure the regulariser is not optimised away
+
+
         xgn_track = ScatterBackTracks()([use_is_track, xgn_track, tridx])
         x = Concatenate()([xgn_track, x])#now there will be zeros in places where there are no tracks
         
@@ -239,15 +249,21 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
         xgn, gncoords, gnidx, gndist = TEGN_block(x, rs, config['General']['gravnet'][i]['n'], 6*[32], 
                                                        N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_common_{i}")
 
-        # gndist = StopGradient()(gndist)
-        gncoords = StopGradient()(gncoords)
+        #regularise
+        gndist = LLRegulariseGravNetSpace(
+                    scale=0.01,record_metrics=True,
+                    name=f'regularise_gravnet_{i}')([gndist, prime_coords, gnidx])
+        x = DummyLayer()([x,gndist])#make sure the regulariser is not optimised away
+
+        x = Concatenate()([x, xgn])
+        
         gncoords = PlotCoordinates(
             plot_every=plot_debug_every,
             outdir=debug_outdir,
             name='gn_coords_'+str(i)
             )([gncoords, energy, t_idx, rs])
+        x = DummyLayer()([x,gncoords])#make sure the plotting is not optimised away
 
-        x = Concatenate()([xgn, gncoords])
         if USE_BATCHNORM:
             if USE_KERAS_BATCHNORM:
                 x = tf.keras.layers.BatchNormalization()(x)

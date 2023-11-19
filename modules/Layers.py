@@ -260,6 +260,9 @@ global_layers_list['DistanceWeightedMessagePassing']=DistanceWeightedMessagePass
 from GravNetLayersRagged import TranslationInvariantMP
 global_layers_list['TranslationInvariantMP']=TranslationInvariantMP
 
+from GravNetLayersRagged import DWTICoordAttention
+global_layers_list['DWTICoordAttention']=DWTICoordAttention
+
 from GravNetLayersRagged import ApproxPCA
 global_layers_list['ApproxPCA']=ApproxPCA
 
@@ -389,6 +392,19 @@ from tensorflow.keras.layers import Layer
 import tensorflow.keras.backend as K
 import tensorflow as tf
 
+
+
+
+class DummyLayer(tf.keras.layers.Layer): 
+    '''
+    Just to make sure other layers are not optimised away
+    Inputs:
+    - list of tensors. First will be passed through, the other will be ignored
+    '''
+    def call(self, inputs):
+        return inputs[0]
+
+global_layers_list['DummyLayer']=DummyLayer
 
 class GroupSortActivation(tf.keras.layers.Layer): 
     
