@@ -122,6 +122,7 @@ static void calc_distance_gradients(
         float * d_out_grad_distances,
         bool mean_and_max
 ){
+
     const size_t m = blockIdx.x * blockDim.x + threadIdx.x;
     const size_t l = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -143,7 +144,7 @@ static void calc_distance_gradients(
     float expml = 1.;//distanceWeight(dml);
 
     for(size_t b_f=0;b_f<n_feat;b_f++){
-        __syncthreads();
+        //__syncthreads();
 
         bool firstself=true; ///To be checked!!! this needs to be per feature and stored!
 
@@ -212,7 +213,6 @@ struct AccumulateKnnGradOpFunctor<GPUDevice, dummy> {
         set_feature_grad_zero<<<feat_par.grid(), feat_par.block(), 0,  d.stream()>>>(d_out_grad_features, n_vert, n_feat);
 
         cudaDeviceSynchronize();
-
         calc_feature_gradients<<<feat_par.grid(), feat_par.block(), 0,  d.stream()>>>(
                 d_grad_from_out_features,
                 d_max_feat_indices,
@@ -230,9 +230,10 @@ struct AccumulateKnnGradOpFunctor<GPUDevice, dummy> {
 
         cudaDeviceSynchronize();
 
-
-        grid_and_block neigh_par(n_vert, 128, n_neigh, 4);
-
+        //I still don't fully understand why this is beneficial...
+        //grid_and_block neigh_par(n_vert, 128, n_neigh, 4);
+        grid_and_block neigh_par(n_vert, 2, n_neigh, 256);
+        //grid_and_block neigh_par(n_neigh, 128,n_vert , 4);
 
         calc_distance_gradients<<<neigh_par.grid(), neigh_par.block(), 0,  d.stream()>>>(
                 d_grad_from_out_features,
