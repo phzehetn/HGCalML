@@ -264,7 +264,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
                                                        N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_track_{i}")
         
         xdaf_track = DAF_block( Concatenate()([x_track, xgn_track]), gnidx, gndist,
-              prop_K_out =  4* [[16,16,32]], # 6 hops, 16 features each, 32 out = 128: big but powerful
+              prop_K_out =  6* [[16,16,32]], # 6 hops, 16 features each, 32 out = 128: big but powerful
               name=f'DAF_block_track_{i}')
         xgn_track = Concatenate()([xgn_track, xdaf_track])#big
         
@@ -279,11 +279,11 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
         x = Concatenate()([xgn_track, x])#now there will be zeros in places where there are no tracks
         
         #for everything
-        xgn, gncoords, gnidx, gndist = TEGN_block(x, rs, config['General']['gravnet'][i]['n'], 6*[32], 
+        xgn, gncoords, gnidx, gndist = TEGN_block(x, rs, config['General']['gravnet'][i]['n'], 1*[32], 
                                                        N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_common_{i}")
 
         xdaf = DAF_block( Concatenate()([x, xgn]), gnidx, gndist,
-              prop_K_out =  6* [[6,16,16]], # 6 hops, 4 features each, 32 out = 192: big but powerful
+              prop_K_out =  3* [[6,16,16]], # 6 hops, 4 features each, 32 out = 192: big but powerful
               name=f'DAF_block_common_{i}')
         xgn = Concatenate()([xgn, xdaf])#big
 
