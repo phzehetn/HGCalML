@@ -30,7 +30,7 @@ LossOptions:
 
 Training:
   - stage_1:
-    batch_size: 120000
+    batch_size: 70000
     learning_rate: 0.001
     epochs: 4
 

@@ -214,7 +214,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
             kernel_regularizer=DENSE_REGULARIZER)(x)
         x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
 
-        if i == GRAVNET_ITERATIONS-1: # last time
+        if i == GRAVNET_ITERATIONS-1: # last time, but debatable - annoying that ragged is so slow, maybe we should use gather and scatter here
             x_hit, x_track, rs_hit, rs_track = SplitOffTracks()([is_track, [x], rs])
             x_track = x_track[0]
             x_hit = x_hit[0]
@@ -306,7 +306,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
                                              use_energy_weights=True,
                                              record_metrics=True,
                                              print_loss=True,
-                                             print_time=True,
+                                             print_batch_time=True,
                                              name="ExtendedOCLoss",
                                              implementation = loss_implementation,
                                              **LOSS_OPTIONS)(

@@ -2239,15 +2239,16 @@ class SelectFromIndicesWithPad(tf.keras.layers.Layer):
     options:
     - default value
     '''
-    def __init__(self, default = 0., **kwargs):
+    def __init__(self, default = 0., subtract_self = False, **kwargs):
         self.default = default
+        self.subtract_self = subtract_self
         if 'dynamic' in kwargs:
             super(SelectFromIndicesWithPad, self).__init__(**kwargs)
         else:
             super(SelectFromIndicesWithPad, self).__init__(dynamic=False,**kwargs)
 
     def get_config(self):
-        config = {'default': self.default}
+        config = {'default': self.default, 'subtract_self': self.subtract_self}
         base_config = super(SelectFromIndicesWithPad, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
@@ -2257,6 +2258,8 @@ class SelectFromIndicesWithPad(tf.keras.layers.Layer):
     def call(self, inputs):
         assert len(inputs)==2
         out = SelectWithDefault(inputs[0], inputs[1], self.default)
+        if self.subtract_self:
+            out -= inputs[1][:,tf.newaxis,:]
         return out
 
 
@@ -3868,7 +3871,7 @@ class TranslationInvariantMP(tf.keras.layers.Layer):
         for i in range(len(self.n_feature_transformation)):
             with tf.name_scope(self.name + "/" + str(i)):
                 self.feature_tranformation_dense.append(
-                    tf.keras.layers.Dense(n_feature_transformation[i], activation=activation))
+                    tf.keras.layers.Dense(n_feature_transformation[i], activation=activation, use_bias = i>0))
 
 
     def build(self, input_shapes):

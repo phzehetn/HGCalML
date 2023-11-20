@@ -129,6 +129,34 @@ def TEGN_block(x, rs,
     x = Dense(x_pre.shape[1], activation='elu',name = name+ "_out_dense")(x)
     return tf.keras.layers.Add()([x, x_pre]), coords, nidx, distsq #this makes it explicitly TE
 
+def DAF_block(x, nidx, distsq,
+              prop_K_out: list = [],
+              name="DAF_block"):
+
+    from Layers import SelectFromIndicesWithPad, SortAndSelectNeighbours, RemoveSelfRef
+    
+    nidx = RemoveSelfRef()(nidx)
+    distsq = RemoveSelfRef()(distsq)
+    sdsq, sidxs = SortAndSelectNeighbours(K= nidx.shape[1], sort=True)([distsq, nidx]) #sort once then only select
+    out = []
+    x_in = x
+    for i,d in enumerate(prop_K_out):
+        assert len(d) == 3
+        np, K, nout = d
+        assert isinstance(np, int) and isinstance(K, int) and isinstance(nout, int)
+        tdsq, tidx = SortAndSelectNeighbours(K=K,sort=False)([sdsq, sidxs])
+        x_s = Dense(np, name=name+f'_pre_dense_{i}', use_bias = False)(x_in) #bias doesn't do anything
+        x_s = SelectFromIndicesWithPad(subtract_self=True)([tidx,x_s]) #make it TE
+        x_s = tf.keras.layers.Flatten()(x_s)
+        x_s = Dense(nout, name=name+f'_post_dense_{i}', activation='elu')(x_s)
+        out.append(x_s)
+        x_in = Concatenate()([x_in, x_s])#add back non TE for next round
+    if len(out) > 1:
+        return Concatenate()(out)
+    else:
+        return out[0]
+
+
 
 def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENCY*PLOT_FREQUENCY):
     """
@@ -235,6 +263,11 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
         xgn_track, gncoords, gnidx, gndist = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n'], 6*[32], #cheap
                                                        N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_track_{i}")
         
+        xdaf_track = DAF_block( Concatenate()([x_track, xgn_track]), gnidx, gndist,
+              prop_K_out =  4* [[16,16,32]], # 6 hops, 16 features each, 32 out = 128: big but powerful
+              name=f'DAF_block_track_{i}')
+        xgn_track = Concatenate()([xgn_track, xdaf_track])#big
+        
         #regularise
         gndist = LLRegulariseGravNetSpace(
                     scale=0.01,record_metrics=True,
@@ -248,6 +281,11 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
         #for everything
         xgn, gncoords, gnidx, gndist = TEGN_block(x, rs, config['General']['gravnet'][i]['n'], 6*[32], 
                                                        N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_common_{i}")
+
+        xdaf = DAF_block( Concatenate()([x, xgn]), gnidx, gndist,
+              prop_K_out =  6* [[6,16,16]], # 6 hops, 4 features each, 32 out = 192: big but powerful
+              name=f'DAF_block_common_{i}')
+        xgn = Concatenate()([xgn, xdaf])#big
 
         #regularise
         gndist = LLRegulariseGravNetSpace(
