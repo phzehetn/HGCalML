@@ -108,8 +108,8 @@ wandb.save(sys.argv[1]) # Save config file
 ### Define Model ##############################################################
 ###############################################################################
 
-USE_BATCHNORM=False
-USE_KERAS_BATCHNORM=False
+USE_BATCHNORM=True
+USE_KERAS_BATCHNORM=True
 USE_RANDOM=False
 
 def TEGN_block(x, rs, 
