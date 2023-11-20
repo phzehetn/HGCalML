@@ -37,7 +37,7 @@ TRIGGERED_TIME=False
 NAME="batchscript"
 # constraint="a100"
 CONSTRAINT="a100-80gb"
-CONSTRAINT="a100"
+#CONSTRAINT="a100-80gb"
 TIME="7-0"
 
 for clo in sys.argv:
