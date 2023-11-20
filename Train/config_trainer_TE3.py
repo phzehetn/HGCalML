@@ -131,13 +131,14 @@ def TEGN_block(x, rs,
 
 def DAF_block(x, nidx, distsq,
               prop_K_out: list = [],
+              invert_distance=False,
               name="DAF_block"):
 
     from Layers import SelectFromIndicesWithPad, SortAndSelectNeighbours, RemoveSelfRef
     
     nidx = RemoveSelfRef()(nidx)
     distsq = RemoveSelfRef()(distsq)
-    sdsq, sidxs = SortAndSelectNeighbours(K= nidx.shape[1], sort=True)([distsq, nidx]) #sort once then only select
+    sdsq, sidxs = SortAndSelectNeighbours(K= nidx.shape[1], sort=True, descending=invert_distance)([distsq, nidx]) #sort once then only select
     out = []
     x_in = x
     for i,d in enumerate(prop_K_out):
@@ -266,7 +267,14 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
         xdaf_track = DAF_block( Concatenate()([x_track, xgn_track]), gnidx, gndist,
               prop_K_out =  6* [[16,16,32]], # 6 hops, 16 features each, 32 out = 128: big but powerful
               name=f'DAF_block_track_{i}')
-        xgn_track = Concatenate()([xgn_track, xdaf_track])#big
+
+        xdaf_track2 = DAF_block( Concatenate()([x_track, xgn_track]), gnidx, gndist,
+              prop_K_out =  6* [[16,16,32]], # 6 hops, 16 features each, 32 out = 128: big but powerful
+              invert_distance=True,
+              name=f'DAF_block_track_inv_{i}')
+
+        xgn_track = Concatenate()([xgn_track, xdaf_track, xdaf_track2])#big
+        xgn_track = Dense(96, activation='elu')(xgn_track)
         
         #regularise
         gndist = LLRegulariseGravNetSpace(
@@ -283,9 +291,15 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
                                                        N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_common_{i}")
 
         xdaf = DAF_block( Concatenate()([x, xgn]), gnidx, gndist,
-              prop_K_out =  3* [[6,16,16]], # 6 hops, 4 features each, 32 out = 192: big but powerful
+              prop_K_out =  4* [[6,8,16]], # 128
               name=f'DAF_block_common_{i}')
-        xgn = Concatenate()([xgn, xdaf])#big
+        
+        xdaf2 = DAF_block( Concatenate()([x, xgn]), gnidx, gndist,
+              prop_K_out =  4* [[6,8,16]], # 128
+              invert_distance = True,
+              name=f'DAF_block_common_inv_{i}')
+
+        xgn = Concatenate()([x, xgn, xdaf, xdaf2])#big
 
         #regularise
         gndist = LLRegulariseGravNetSpace(
