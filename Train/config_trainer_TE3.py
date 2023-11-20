@@ -228,7 +228,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
     x = Concatenate()([x, c_coords, is_track])
     x = Dense(64, name='dense_pre_loop', activation=DENSE_ACTIVATION)(x)
 
-    allfeat = []
+    allfeat = [x]
     print("Available keys: ", pre_processed.keys())
 
     ###########################################################################
