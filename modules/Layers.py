@@ -36,6 +36,9 @@ global_layers_list['MLReductionMetrics'] = MLReductionMetrics
 from MetricsLayers import OCReductionMetrics
 global_layers_list['OCReductionMetrics'] = OCReductionMetrics
 
+from MetricsLayers import MLMeanStd
+global_layers_list['MLMeanStd'] = MLMeanStd
+
 #older layers
 
 from LayersRagged import RaggedSumAndScatter

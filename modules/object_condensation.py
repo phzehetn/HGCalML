@@ -84,16 +84,19 @@ class Basic_OC_per_sample(object):
         self.valid=False #constants not created
         
         
-    #helper
-    def _create_x_alpha_k(self): 
-        x_kalpha_m = tf.gather_nd(self.x_k_m,self.alpha_k, batch_dims=1) # K x C
-        if self.use_mean_x>0:
-            w_k_m = self.q_k_m * self.mask_k_m
-            x_kalpha_m_m = tf.reduce_sum(w_k_m * self.x_k_m,axis=1) # K x C
-            x_kalpha_m_m = tf.math.divide_no_nan(x_kalpha_m_m, tf.reduce_sum(w_k_m, axis=1)+1e-4)
-            x_kalpha_m = self.use_mean_x * x_kalpha_m_m + (1. - self.use_mean_x)*x_kalpha_m
-        
-        return x_kalpha_m 
+    def _weighted_alpha_k(self, v_k_m, w_k_m, fraction_wrt_alpha : float):
+        '''
+        vkm: V x V' x F
+        '''
+        w_k_m = w_k_m * self.mask_k_m
+        v_k_m_kalpha_m_m = tf.reduce_sum(w_k_m * v_k_m, axis=1) # K x F
+        wvk = tf.math.divide_no_nan(v_k_m_kalpha_m_m, tf.reduce_sum(w_k_m, axis=1)+1e-6) # K x F
+        if fraction_wrt_alpha > 1.-1e-6:
+            return wvk
+        ak = tf.gather_nd(v_k_m,self.alpha_k, batch_dims=1) # K x C    
+        return ak * (1. - fraction_wrt_alpha) + fraction_wrt_alpha * wvk
+    
+
     
     def create_Ms(self, truth_idx):
         self.Msel, self.Mnot, _ = CreateMidx(truth_idx, calc_m_not=True)
@@ -146,9 +149,12 @@ class Basic_OC_per_sample(object):
         self.alpha_k = tf.argmax(self.q_k_m, axis=1)# high beta and not spectator -> large q
         
         self.beta_k = tf.gather_nd(self.beta_k_m, self.alpha_k, batch_dims=1) # K x 1
-        self.x_k = self._create_x_alpha_k() #K x C
         self.q_k = tf.gather_nd(self.q_k_m, self.alpha_k, batch_dims=1) # K x 1
-        self.d_k = tf.gather_nd(self.d_k_m, self.alpha_k, batch_dims=1) # K x 1
+
+        # q weighted
+        self.x_k = self._weighted_alpha_k(self.x_k_m, self.q_k_m, self.use_mean_x) #K x C
+        # beta weighted
+        self.d_k = self._weighted_alpha_k(self.d_k_m, self.beta_k_m, self.use_mean_x) # K x 1
         
         #just a temp
         ow_k_m = SelectWithDefault(self.Msel, object_weight, 0.)
@@ -309,17 +315,20 @@ class Basic_OC_per_sample(object):
 
     def calc_metrics(self, energies):
         return self._calc_containment(energies), self._calc_contamination(energies)
+
     # metrics functions that can be called at the end, first calc containment, then contamination
     def _calc_containment(self, energies):
         '''
         energies as  V x 1
+        needs distance weighting
         '''
          
-        x_k_alpha = tf.gather_nd(self.x_k_m,self.alpha_k, batch_dims=1) # K x C
+        x_k_alpha = tf.gather_nd(self.x_k_m, self.alpha_k, batch_dims=1) # K x C
         #get mean minimum distance
         d_x_k = (tf.expand_dims(x_k_alpha, axis=0) - tf.expand_dims(x_k_alpha, axis=1))**2  # K x K x C
         d_x_k = tf.reduce_sum(d_x_k, axis=2) + 10000. * tf.eye(d_x_k.shape[0],d_x_k.shape[1])  # K x K , add large identity
         d_m_x_k = tf.reduce_min(d_x_k, axis=1, keepdims=True)# K x 1
+        #relative to d_k
         d_m_x_k = tf.sqrt(d_m_x_k)/self.d_k 
         self.rel_metrics_radius = tf.reduce_mean(d_m_x_k) / 2. # ()
 

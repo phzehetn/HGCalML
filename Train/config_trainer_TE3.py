@@ -19,7 +19,7 @@ from DeepJetCore.DJCLayers import StopGradient, ScalarMultiply
 
 import training_base_hgcal
 from Layers import ScaledGooeyBatchNorm2
-from Layers import MixWhere, DummyLayer
+from Layers import MixWhere, DummyLayer, MLMeanStd
 from Layers import RaggedGravNet
 from Layers import PlotCoordinates
 from Layers import DistanceWeightedMessagePassing, TranslationInvariantMP
@@ -365,10 +365,12 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
     pred_beta, pred_ccoords, pred_dist, \
         pred_energy_corr, pred_energy_low_quantile, pred_energy_high_quantile, \
         pred_pos, pred_time, pred_time_unc, pred_id = \
-        create_outputs(x, n_ccoords=N_CLUSTER_SPACE_COORDINATES, fix_distance_scale=True,
+        create_outputs(x, n_ccoords=N_CLUSTER_SPACE_COORDINATES, fix_distance_scale=False,
                 is_track=is_track,
                 set_track_betas_to_one=True
                 )
+
+    pred_dist = MLMeanStd(name='predicted_distance')(pred_dist)
 
     # pred_ccoords = LLFillSpace(maxhits=2000, runevery=5, scale=0.01)([pred_ccoords, rs, t_idx])
 
