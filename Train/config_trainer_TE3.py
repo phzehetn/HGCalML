@@ -370,7 +370,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
                 set_track_betas_to_one=True
                 )
 
-    pred_dist = MLMeanStd(name='predicted_distance')(pred_dist)
+    pred_dist = MLMeanStd(name='predicted_distance', record_metrics = True)(pred_dist)
 
     # pred_ccoords = LLFillSpace(maxhits=2000, runevery=5, scale=0.01)([pred_ccoords, rs, t_idx])
 
