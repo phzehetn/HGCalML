@@ -5,7 +5,7 @@ from time import time
 from pdb import set_trace
 import matplotlib
 matplotlib.use('Agg') 
-import wandb
+from wandb_interface import wandb_wrapper as wandb
 
 
 class wandbCallback(Callback):

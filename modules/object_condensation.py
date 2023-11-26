@@ -3,7 +3,7 @@
 import tensorflow as tf
 from oc_helper_ops import CreateMidx, SelectWithDefault
 from binned_select_knn_op import BinnedSelectKnn
-
+from wandb_interface import wandb_wrapper as wandb
 
 
 def huber(x, d):
@@ -322,6 +322,9 @@ class Basic_OC_per_sample(object):
         energies as  V x 1
         needs distance weighting
         '''
+
+        energies_k_m = SelectWithDefault(self.Msel, energies, 0.) #K x V' x 1
+        self.energies_k  = tf.reduce_sum(energies_k_m, axis=1) #K x 1
          
         x_k_alpha = tf.gather_nd(self.x_k_m, self.alpha_k, batch_dims=1) # K x C
         #get mean minimum distance
@@ -334,15 +337,19 @@ class Basic_OC_per_sample(object):
 
         ##now metrics
         dxk = tf.reduce_sum( (tf.expand_dims(x_k_alpha, axis=1) - self.x_k_m)**2 , axis= -1) #K x V'
-        
+
         in_radius = self.rel_metrics_radius > tf.sqrt(dxk)/self.d_k #K x V'
         in_radius = in_radius[...,tf.newaxis]
 
-        energies_k_m = SelectWithDefault(self.Msel, energies, 0.) #K x V' x 1
-        self.energies_k  = tf.reduce_sum(energies_k_m, axis=1) #K x 1
-        
         in_radius_energy = tf.reduce_sum(tf.where( in_radius, energies_k_m, 0. ), axis=1) # K x 1
         in_radius_energy /= self.energies_k
+
+        #log
+        wandb.log({ 'rel_metrics_radius': self.rel_metrics_radius})
+        wandb.log({ 'containment_E10': tf.reduce_mean( in_radius_energy[self.energies_k < 10.] )})
+        wandb.log({ 'containment_10E40': tf.reduce_mean( in_radius_energy[tf.logical_and(self.energies_k >= 10., self.energies_k < 40.)] )})
+        wandb.log({ 'containment_40E': tf.reduce_mean( in_radius_energy[self.energies_k >= 40.] )})
+
         return tf.reduce_mean(in_radius_energy)
 
     def _calc_contamination(self, energies):
@@ -356,7 +363,13 @@ class Basic_OC_per_sample(object):
         energies_ir_all_k_v = tf.where(in_radius[...,tf.newaxis], energies_k_v , 0.)
         energies_ir_not_k_v = tf.where(in_radius[...,tf.newaxis], self.Mnot * energies_k_v , 0.)
         
-        rel_cont = tf.reduce_sum(energies_ir_not_k_v, axis=1)/tf.reduce_sum(energies_ir_all_k_v, axis=1)
+        rel_cont = tf.reduce_sum(energies_ir_not_k_v, axis=1)/(tf.reduce_sum(energies_ir_all_k_v, axis=1) + 1e-6)
+
+        #log
+        wandb.log({ 'contamination_E10': tf.reduce_mean( rel_cont[self.energies_k < 10.] )})
+        wandb.log({ 'contamination_10E40': tf.reduce_mean( rel_cont[tf.logical_and(self.energies_k >= 10., self.energies_k < 40.)] )})
+        wandb.log({ 'contamination_40E': tf.reduce_mean( rel_cont[self.energies_k >= 40.] )})
+
         return tf.reduce_mean(rel_cont)
     
 
@@ -621,7 +634,7 @@ class GraphCond_OC_per_sample(Basic_OC_per_sample):
                                      tf.reduce_sum(self.mask_k_m, axis=1) + 1e-3)
         return tf.debugging.check_numerics(pen,"GCOC: beta penalty")
     
-
+from wandb_interface import wandb_wrapper as wandb
 class OC_loss(object):
     def __init__(self, 
                  loss_impl=Basic_OC_per_sample,
@@ -648,7 +661,10 @@ class OC_loss(object):
             return tot_V_att, tot_V_rep, tot_Noise_pen, tot_B_pen, tot_pll,tot_too_much_B_pen
         batch_size = rs.shape[0] - 1
 
+        wandb.log({  'batch_size': batch_size})
+
         contai,contam = tf.constant(0,dtype='float32'),tf.constant(0,dtype='float32')
+        add_metrics = []
     
         for b in tf.range(batch_size):
             
@@ -666,14 +682,18 @@ class OC_loss(object):
                 tot_V_att, tot_V_rep, tot_Noise_pen, tot_B_pen, tot_pll,tot_too_much_B_pen
                 )
             if energies is not None: #just last batch is fine
-                ca,cm = self.loss_impl.calc_metrics(energies[rs[b]:rs[b + 1]])
-                contai += ca / float(batch_size)
-                contam += cm / float(batch_size)
-
+                tbm = self.loss_impl.calc_metrics(energies[rs[b]:rs[b + 1]])
+                if len(add_metrics) == 0:
+                    add_metrics = [t for t in tbm]
+                else:
+                    for i_m in range(len(tbm)):
+                        add_metrics[i_m] += tbm[i_m]
+                
         bs = tf.cast(batch_size, dtype='float32') + 1e-3
         out = [a/bs for a in [tot_V_att, tot_V_rep, tot_Noise_pen, tot_B_pen, tot_pll,tot_too_much_B_pen]]
+        add_metrics = [a/float(batch_size) for a in add_metrics]
         if energies is not None:
-            return out + [contai, contam]
+            return out + add_metrics
         return out, None, None
 
 

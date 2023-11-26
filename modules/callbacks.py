@@ -657,7 +657,7 @@ class NanSweeper(tf.keras.callbacks.Callback):
         nw = []
         n_nans = 0
         for w,sw in zip(mw, self.saved_weights):
-            nw.append( tf.where( tf.math.is_finite(w), w, sw ).numpy())
+            nw.append( tf.where( tf.math.is_finite(w), w, sw/10. ).numpy())
             n_nans += tf.reduce_sum(
                 tf.cast(tf.logical_not(tf.math.is_finite(w)),'int32')
                         ).numpy()

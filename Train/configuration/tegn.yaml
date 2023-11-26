@@ -1,9 +1,9 @@
 General:
   oc_implementation: 'hinge'
   gravnet:
+    - n: 64
     - n: 128
-    - n: 128
-  n_cluster_space_coordinates: 8
+  n_cluster_space_coordinates: 3
   n_gravnet_space_coordinates: 5
 
 DenseOptions:
@@ -29,17 +29,17 @@ LossOptions:
 
 Training:
   - stage_1:
-    batch_size: 150000
-    learning_rate: 0.001
+    batch_size: 160000
+    learning_rate: 0.0001
     epochs: 4
 
   - stage_2:
-    batch_size: 180000
+    batch_size: 160000
     learning_rate: 0.0001
     epochs: 10
 
   - stage_3:
-    batch_size: 180000
+    batch_size: 160000
     learning_rate: 0.00001
     epochs: 20
 

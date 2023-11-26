@@ -21,6 +21,16 @@ from Initializers import EyeInitializer
 from oc_helper_ops import SelectWithDefault
 from baseModules import LayerWithMetrics
 
+def layernorm(x, return_norm=False):
+    #x = x - tf.reduce_mean(x,axis=-1, keepdims=True)
+    norm = tf.reduce_sum(x**2, axis=-1,keepdims=True)
+    norm = tf.sqrt(norm+1e-6)
+    if return_norm:
+        x = tf.concat([x / norm * tf.sqrt(tf.cast(x.shape[-1],'float32')), norm], axis=-1)
+    else:
+        x = x / norm * tf.sqrt(tf.cast(x.shape[-1],'float32'))
+    return x
+
 #helper
 #def AccumulateKnnRS(distances,  features, indices,
 #                  mean_and_max=True,):
@@ -3911,8 +3921,7 @@ class TranslationInvariantMP(tf.keras.layers.Layer):
         for i in range(len(self.n_feature_transformation)):
             
             if self.layer_norm:
-                features = tf.math.divide_no_nan(features, 
-                tf.sqrt(tf.reduce_sum(features**2, axis=-1, keepdims = True) + 1e-6 ) )
+                features = layernorm(features)
             prev_feat = features
 
             if self.mean:
@@ -3935,7 +3944,7 @@ class TranslationInvariantMP(tf.keras.layers.Layer):
                     features -= prev_feat * minus_xi
 
                 if self.sum_weight:
-                    wsum = tf.math.divide_no_nan(K, tf.reduce_sum( tf.exp(-10.*distancesq), axis=1, keepdims=True) + 1e-3)
+                    wsum = tf.math.divide_no_nan(K, tf.reduce_sum( tf.exp(-10.*distancesq), axis=1, keepdims=True) + 1e-2)#large eps
                     features *= wsum
             else: #max
                 nfeat = SelectWithDefault(neighbour_indices, features,-2.)

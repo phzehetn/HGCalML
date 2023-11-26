@@ -50,7 +50,8 @@ from callbacks import NanSweeper, DebugPlotRunner
 parser = ArgumentParser('training')
 parser.add_argument('configFile')
 parser.add_argument('--run_name', help="wandb run name")
-CONFIGFILE = sys.argv[1]
+train = training_base_hgcal.HGCalTraining(parser=parser)
+CONFIGFILE = train.args.configFile
 print(f"Using config File: \n{CONFIGFILE}")
 
 with open(CONFIGFILE, 'r') as f:
@@ -96,6 +97,7 @@ for i in range(len(config['Training'])):
         wandb_config[f"train_{i}+_max_visc"] = 0.999
         wandb_config[f"train_{i}+_fluidity_decay"] = 0.1
 
+#wandb.active = not train.args.interactive
 wandb.init(
     project="jans_test_playground",
     config=wandb_config,
@@ -119,6 +121,7 @@ def TEGN_block(x, rs,
                trfs :list, 
                N_coords : int,
                extra = [],
+               no_add=False,
                name = 'TEGN_block'):
 
     x_pre = x
@@ -130,6 +133,8 @@ def TEGN_block(x, rs,
                                layer_norm = True,
                                #sum_weight = True
                                )([x, nidx, distsq])
+    if no_add:
+        return x, coords, nidx, distsq
     for i,e in enumerate(extra):
         x = Dense(e, activation='elu',name = name+ f"_extra_dense_{i}")(x)
     x = Dense(x_pre.shape[1], activation='elu',name = name+ "_out_dense")(x)
@@ -233,9 +238,9 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
     #c_coords = extent_coords_if_needed(c_coords, x, N_CLUSTER_SPACE_COORDINATES)
 
     x = Concatenate()([x, c_coords, is_track])
-    x = Dense(64, name='dense_pre_loop', activation=DENSE_ACTIVATION)(x)
+    x_nte = Dense(64, name='dense_pre_loop')(x) # no activation, just fan out
 
-    allfeat = [x]
+    allfeat = []
     print("Available keys: ", pre_processed.keys())
 
     ###########################################################################
@@ -243,12 +248,12 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
     ###########################################################################
 
     rs_track, tridx = None, None
+    x = x_nte
 
     for i in range(GRAVNET_ITERATIONS):
 
         d_shape = x.shape[1]//2
-        x = Dense(d_shape,activation=DENSE_ACTIVATION,
-            kernel_regularizer=DENSE_REGULARIZER)(x)
+        
         if USE_BATCHNORM:
             if USE_KERAS_BATCHNORM:
                 x = tf.keras.layers.BatchNormalization()(x)
@@ -267,9 +272,13 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
     
             #for regularisation
             pc_track = SelectTracks()([tridx, prime_coords])
+
+            ## all TEQ:
     
             xgn_track, gncoords, gnidx, gndist = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n'], 6*[32], #cheap
-                                                           N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_track_{i}")
+                                                            N_GRAVNET_SPACE_COORDINATES, 
+                                                            no_add = True,
+                                                            name = f"TEGN_block_track_{i}")
             
             xdaf_track = DAF_block( Concatenate()([x_track, xgn_track]), gnidx, gndist,
                   prop_K_out =  6* [[16,16,32]], # 6 hops, 16 features each, 32 out = 128: big but powerful
@@ -280,7 +289,11 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
                   invert_distance=True,
                   name=f'DAF_block_track_inv_{i}')
     
+            # TEQ
             xgn_track = Concatenate()([xgn_track, xdaf_track, xdaf_track2])#big
+
+
+            
             xgn_track = Dense(96, activation='elu')(xgn_track)
             
             #regularise
@@ -298,18 +311,20 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
             complexity = 2
         #for everything
         xgn, gncoords, gnidx, gndist = TEGN_block(x, rs, config['General']['gravnet'][i]['n'], complexity*[32], 
-                                                       N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_common_{i}")
+                                                       N_GRAVNET_SPACE_COORDINATES,  
+                                                            no_add = True,
+                                                       name = f"TEGN_block_common_{i}")
 
         xdaf = DAF_block( Concatenate()([x, xgn]), gnidx, gndist,
-              prop_K_out =  4* [[6,8,16]], # 128
+              prop_K_out =  4* [[6,16,32]], # 128
               name=f'DAF_block_common_{i}')
         
         xdaf2 = DAF_block( Concatenate()([x, xgn]), gnidx, gndist,
-              prop_K_out =  4* [[6,8,16]], # 128
+              prop_K_out =  2* [[6,16,64]], # 128
               invert_distance = True,
               name=f'DAF_block_common_inv_{i}')
 
-        xgn = Concatenate()([x, xgn, xdaf, xdaf2])#big
+        x = Concatenate()([xgn, xdaf, xdaf2, xgn_track])#big, now all TEQ
 
         #regularise
         gndist = LLRegulariseGravNetSpace(
@@ -366,6 +381,9 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
               name=f"dense_final_{3}",
               activation=DENSE_ACTIVATION,
               kernel_regularizer=DENSE_REGULARIZER)(x)
+    #nte part
+    x = tf.keras.layers.Add()([x, x_nte])
+
     if USE_BATCHNORM:
         if USE_KERAS_BATCHNORM:
             x = tf.keras.layers.BatchNormalization()(x)
@@ -434,7 +452,6 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENC
 ###############################################################################
 
 
-train = training_base_hgcal.HGCalTraining(parser=parser)
 
 if not train.modelSet():
     train.setModel(
