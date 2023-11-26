@@ -320,23 +320,22 @@ class Basic_OC_per_sample(object):
     def _calc_containment(self, energies):
         '''
         energies as  V x 1
-        needs distance weighting
         '''
 
         energies_k_m = SelectWithDefault(self.Msel, energies, 0.) #K x V' x 1
         self.energies_k  = tf.reduce_sum(energies_k_m, axis=1) #K x 1
          
-        x_k_alpha = tf.gather_nd(self.x_k_m, self.alpha_k, batch_dims=1) # K x C
+        #x_k_alpha = tf.gather_nd(self.x_k_m, self.alpha_k, batch_dims=1) # K x C
         #get mean minimum distance
-        d_x_k = (tf.expand_dims(x_k_alpha, axis=0) - tf.expand_dims(x_k_alpha, axis=1))**2  # K x K x C
-        d_x_k = tf.reduce_sum(d_x_k, axis=2) + 10000. * tf.eye(d_x_k.shape[0],d_x_k.shape[1])  # K x K , add large identity
-        d_m_x_k = tf.reduce_min(d_x_k, axis=1, keepdims=True)# K x 1
+        d_k_k = (tf.expand_dims(self.x_k, axis=0) - tf.expand_dims(self.x_k, axis=1))**2  # K x K x C
+        d_k_k = tf.reduce_sum(d_k_k, axis=2) + 10000. * tf.eye(d_k_k.shape[0],d_k_k.shape[1])  # K x K , add large identity
+        d_m_k_k = tf.reduce_min(d_k_k, axis=1, keepdims=True)# K x 1
         #relative to d_k
-        d_m_x_k = tf.sqrt(d_m_x_k)/self.d_k 
-        self.rel_metrics_radius = tf.reduce_mean(d_m_x_k) / 2. # ()
+        d_m_k_k = tf.sqrt(d_m_k_k)/self.d_k 
+        self.rel_metrics_radius = tf.reduce_mean(d_m_k_k) / 2. # ()
 
         ##now metrics
-        dxk = tf.reduce_sum( (tf.expand_dims(x_k_alpha, axis=1) - self.x_k_m)**2 , axis= -1) #K x V'
+        dxk = tf.reduce_sum( (tf.expand_dims(self.x_k, axis=1) - self.x_k_m)**2 , axis= -1) #K x V'
 
         in_radius = self.rel_metrics_radius > tf.sqrt(dxk)/self.d_k #K x V'
         in_radius = in_radius[...,tf.newaxis]
@@ -345,17 +344,19 @@ class Basic_OC_per_sample(object):
         in_radius_energy /= self.energies_k
 
         #log
-        wandb.log({ 'rel_metrics_radius': self.rel_metrics_radius})
-        wandb.log({ 'containment_E10': tf.reduce_mean( in_radius_energy[self.energies_k < 10.] )})
-        wandb.log({ 'containment_10E40': tf.reduce_mean( in_radius_energy[tf.logical_and(self.energies_k >= 10., self.energies_k < 40.)] )})
-        wandb.log({ 'containment_40E': tf.reduce_mean( in_radius_energy[self.energies_k >= 40.] )})
+        wandb.log({ 
+                    'predicted_distance_k': wandb.Histogram(self.d_k ),
+                    'rel_metrics_radius': self.rel_metrics_radius,
+                    'containment_E10': tf.reduce_mean( in_radius_energy[self.energies_k < 10.] ),
+                    'containment_10E40': tf.reduce_mean( in_radius_energy[tf.logical_and(self.energies_k >= 10., self.energies_k < 40.)] ),
+                    'containment_40E': tf.reduce_mean( in_radius_energy[self.energies_k >= 40.] )})
+
 
         return tf.reduce_mean(in_radius_energy)
 
     def _calc_contamination(self, energies):
 
-        x_k_alpha = tf.gather_nd(self.x_k_m,self.alpha_k, batch_dims=1) 
-        dsq = tf.expand_dims(x_k_alpha, axis=1) - tf.expand_dims(self.x_v, axis=0) #K x V x C
+        dsq = tf.expand_dims(self.x_k, axis=1) - tf.expand_dims(self.x_v, axis=0) #K x V x C
         dsq = tf.reduce_sum(dsq**2, axis=-1)  #K x V 
         in_radius = self.rel_metrics_radius > tf.sqrt(dsq) / self.d_k# K x V
         

@@ -11,7 +11,8 @@ class WandBWrapper:
             return
         if self._wandb is not None:
             raise RuntimeError("wandb is already initialised")
-        self._wandb = wandb.init(*args, **kwargs)
+        self._wandb = wandb 
+        self._wandb.init(*args, **kwargs)
 
     def _dummy(self, *args, **kwargs):
         pass
