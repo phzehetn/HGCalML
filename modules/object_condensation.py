@@ -205,7 +205,6 @@ class Basic_OC_per_sample(object):
         
     def V_rep_k(self):
         
-        
         K = tf.reduce_sum(tf.ones_like(self.q_k))
         N_notk = tf.reduce_sum(self.Mnot, axis=1)
         #future remark: if this gets too large, one could use a kNN here
@@ -314,6 +313,7 @@ class Basic_OC_per_sample(object):
 
 
     def calc_metrics(self, energies):
+        wandb.log({'beta_k': wandb.Histogram(self.beta_k )})
         return self._calc_containment(energies), self._calc_contamination(energies)
 
     # metrics functions that can be called at the end, first calc containment, then contamination
