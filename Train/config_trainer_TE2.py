@@ -22,10 +22,10 @@ from Layers import ScaledGooeyBatchNorm2
 from Layers import MixWhere
 from Layers import RaggedGravNet
 from Layers import PlotCoordinates
-from Layers import DistanceWeightedMessagePassing
+from Layers import DistanceWeightedMessagePassing, TranslationInvariantMP
 from Layers import LLFillSpace
 from Layers import LLExtendedObjectCondensation
-from Layers import DictModel
+from Layers import DictModel, KNN
 from Layers import RaggedGlobalExchange
 from Layers import SphereActivation
 from Layers import Multi
@@ -42,7 +42,6 @@ from noise_filter import noise_filter
 from callbacks import plotClusteringDuringTraining
 from callbacks import plotClusterSummary
 from callbacks import NanSweeper, DebugPlotRunner
-
 
 ####################################################################################################
 ### Load Configuration #############################################################################
@@ -65,6 +64,10 @@ BATCHNORM_OPTIONS = config['BatchNormOptions']
 DENSE_ACTIVATION = config['DenseOptions']['activation']
 DENSE_REGULARIZER = tf.keras.regularizers.l2(config['DenseOptions']['kernel_regularizer_rate'])
 DROPOUT = config['DenseOptions']['dropout']
+
+
+RECORD_FREQUENCY = 3
+PLOT_FREQUENCY = 40
 
 wandb_config = {
     "loss_implementation"           :   config['General']['oc_implementation'],
@@ -105,8 +108,23 @@ wandb.save(sys.argv[1]) # Save config file
 ### Define Model ##############################################################
 ###############################################################################
 
+def TEGN_block(x, rs, 
+               K : int,
+               trfs :list, 
+               N_coords : int,
+               extra = [],
+               name = 'TEGN_block'):
+    x_pre = x
+    coords = Dense(N_coords, name = name+"_coords")(x)
+    nidx, distsq = KNN(K=K)([coords, rs])
+    x = TranslationInvariantMP(trfs, activation='elu',name = name+ "_te_mp")([x, nidx, distsq])
+    for i,e in enumerate(extra):
+        x = Dense(e, activation='elu',name = name+ f"_extra_dense_{i}")(x)
+    x = Dense(x_pre.shape[1], activation='elu',name = name+ "_out_dense")(x)
+    return tf.keras.layers.Add()([x, x_pre]), coords, nidx, distsq #this makes it explicitly TE
 
-def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
+
+def config_model(Inputs, td, debug_outdir=None, plot_debug_every=RECORD_FREQUENCY*PLOT_FREQUENCY):
     """
     Function that defines the model to train
     """
@@ -126,13 +144,52 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
     t_idx = pre_processed['t_idx']
     x = pre_processed['features']
 
+
+    ###########################################################################
+    ### the normalisation will be loaded externally, all frozen
+    ###########################################################################
+
+    x = ScaledGooeyBatchNorm2(
+            fluidity_decay=0.01,
+            max_viscosity=0.999999,
+            name='batchnorm_tracks',
+            learn=False,
+            no_bias_gamma=True,
+            trainable = False,
+            no_gaus=False)([x, is_track])
+
+    x = ScaledGooeyBatchNorm2(
+            fluidity_decay=0.01,
+            max_viscosity=0.999999,
+            invert_condition=True,
+            name='batchnorm_hits',
+            learn=False,
+            trainable = False,
+            no_bias_gamma=True,
+            no_gaus=False)([x, is_track])
+
+    c_coords = prime_coords
+    c_coords = ScaledGooeyBatchNorm2(
+        name='batchnorm_ccoords',
+        fluidity_decay=0.01,
+        no_bias_gamma=True,
+        trainable = False,
+        max_viscosity=0.999999)(c_coords)
+    
+    if False: # for training the norm
+        #train input norm first
+        return DictModel(inputs=Inputs, outputs=[x,c_coords])
+    
+    ###########################################################################
+    ###########################################################################
+    
     c_coords = PlotCoordinates(
         plot_every=plot_debug_every,
         outdir=debug_outdir,
         name='input_c_coords',
         # publish = publishpath
         )([c_coords, energy, t_idx, rs])
-    c_coords = extent_coords_if_needed(prime_coords, x, N_CLUSTER_SPACE_COORDINATES)
+    #c_coords = extent_coords_if_needed(c_coords, x, N_CLUSTER_SPACE_COORDINATES)
 
     x = Concatenate()([x, c_coords, is_track])
     x = Dense(64, name='dense_pre_loop', activation=DENSE_ACTIVATION)(x)
@@ -144,81 +201,41 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
     ### Loop over GravNet Layers ##############################################
     ###########################################################################
 
-    gravnet_regs = [0.01, 0.01, 0.01]
+    gravnet_regs = [0.01, 0.01, 0.01, 0.01, 0.01]
+
+    complexity=8
 
     for i in range(GRAVNET_ITERATIONS):
 
         d_shape = x.shape[1]//2
+        x = Dense(d_shape,activation=DENSE_ACTIVATION,
+            kernel_regularizer=DENSE_REGULARIZER)(x)
+        x = Dense(d_shape*2,activation=DENSE_ACTIVATION,
+            kernel_regularizer=DENSE_REGULARIZER)(x)
+        x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
 
-        if i != 0:
-            x = Dense(d_shape,activation=DENSE_ACTIVATION,
-                kernel_regularizer=DENSE_REGULARIZER)(x)
-            x = Dense(d_shape,activation=DENSE_ACTIVATION,
-                kernel_regularizer=DENSE_REGULARIZER)(x)
-
-            x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
-        x_pre = x
-        # get indices of x
-
-        if i == 0:
+        if i == GRAVNET_ITERATIONS-1: # last time, but debatable - annoying that ragged is so slow, maybe we should use gather and scatter here
             x_hit, x_track, rs_hit, rs_track = SplitOffTracks()([is_track, [x], rs])
-            x_hit = x_hit[0]
             x_track = x_track[0]
+            x_hit = x_hit[0]
 
-            xgn_hit, gncoords_hit, gnnidx_hit, gndist_hit = RaggedGravNet(
-                    name = f"RSU_gravnet_{i}_hit", # 76929, 42625, 42625
-                n_neighbours=config['General']['gravnet'][i]['n'],
-                n_dimensions=N_GRAVNET_SPACE_COORDINATES,
-                n_filters=d_shape,
-                n_propagate=2*d_shape,
-                coord_initialiser_noise=None,
-                feature_activation='elu',
-                )([x_hit, rs_hit])
-            xgn_track, gncoords_track, gnnidx_track, gndist_track = RaggedGravNet(
-                    name = f"RSU_gravnet_{i}_track", # 76929, 42625, 42625
-                n_neighbours=16,
-                n_dimensions=N_GRAVNET_SPACE_COORDINATES,
-                n_filters=d_shape,
-                n_propagate=2*d_shape,
-                coord_initialiser_noise=None,
-                feature_activation='elu',
-                )([x_track, rs_track])
-
-
-            x_hit = DistanceWeightedMessagePassing([64, 32, 16], activation='elu')([x_hit, gnnidx_hit, gndist_hit])
-            x_track = DistanceWeightedMessagePassing([64, 32, 16], activation='elu')([x_track, gnnidx_track, gndist_track])
-
-            [xgn, gncoords], rs  = ConcatRaggedTensors()([
-                [xgn_track, gncoords_track],
-                [xgn_hit, gncoords_hit],
+            xgn_track, gncoords_track, *_ = TEGN_block(x_track, rs_track, config['General']['gravnet'][i]['n']//4 + 1, complexity*[64], #cheap
+                                                       N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_track_{i}", extra = [128])
+            
+            xgn_track = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(xgn_track)
+            [x], _  = ConcatRaggedTensors()([
+                [xgn_track],
+                [x_hit],
                 rs_track, rs_hit])
+            
+            #re-embed tracks
+            
+            x = Dense(d_shape*2,activation=DENSE_ACTIVATION,
+                      kernel_regularizer=DENSE_REGULARIZER)(x)
 
-        else:
-            xgn, gncoords, gnnidx, gndist = RaggedGravNet(
-                    name = f"RSU_gravnet_{i}", # 76929, 42625, 42625
-                n_neighbours=config['General']['gravnet'][i]['n'],
-                n_dimensions=N_GRAVNET_SPACE_COORDINATES,
-                n_filters=d_shape,
-                n_propagate=2*d_shape,
-                coord_initialiser_noise=None,
-                feature_activation='elu',
-                # sumwnorm=True,
-                )([x, rs])
+        xgn, gncoords, gnidx, gndist = TEGN_block(x, rs, config['General']['gravnet'][i]['n'], complexity*[16], 
+                                                       N_CLUSTER_SPACE_COORDINATES, name = f"TEGN_block_common_{i}")
 
-            gndist = LLRegulariseGravNetSpace(
-                    scale=gravnet_regs[i],
-                    record_metrics=True,
-                    name=f'regularise_gravnet_{i}')([gndist, prime_coords, gnnidx])
-
-            x_rand = random_sampling_block(
-                    xgn, rs, gncoords, gnnidx, gndist, is_track,
-                    reduction=6, layer_norm=True, name=f"RSU_{i}")
-            x_rand = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x_rand)
-
-            gndist = AverageDistanceRegularizer(
-                strength=1e-3,
-                record_metrics=True
-                )(gndist)
         # gndist = StopGradient()(gndist)
         gncoords = StopGradient()(gncoords)
         gncoords = PlotCoordinates(
@@ -227,10 +244,8 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
             name='gn_coords_'+str(i)
             )([gncoords, energy, t_idx, rs])
 
-        if i == 0:
-            x = Concatenate()([xgn, gncoords])
-        else:
-            x = Concatenate()([x_pre, xgn, x_rand, gncoords])
+        x = Concatenate()([xgn, gncoords])
+        x = ScaledGooeyBatchNorm2(**BATCHNORM_OPTIONS)(x)
         x = Dense(d_shape,
                   name=f"dense_post_gravnet_1_iteration_{i}",
                   activation=DENSE_ACTIVATION,
@@ -275,7 +290,10 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
     pred_beta, pred_ccoords, pred_dist, \
         pred_energy_corr, pred_energy_low_quantile, pred_energy_high_quantile, \
         pred_pos, pred_time, pred_time_unc, pred_id = \
-        create_outputs(x, n_ccoords=N_CLUSTER_SPACE_COORDINATES, fix_distance_scale=True)
+        create_outputs(x, n_ccoords=N_CLUSTER_SPACE_COORDINATES, fix_distance_scale=True,
+                is_track=is_track,
+                set_track_betas_to_one=True
+                )
 
     # pred_ccoords = LLFillSpace(maxhits=2000, runevery=5, scale=0.01)([pred_ccoords, rs, t_idx])
 
@@ -288,6 +306,7 @@ def config_model(Inputs, td, debug_outdir=None, plot_debug_every=2000):
                                              use_energy_weights=True,
                                              record_metrics=True,
                                              print_loss=True,
+                                             print_batch_time=True,
                                              name="ExtendedOCLoss",
                                              implementation = loss_implementation,
                                              **LOSS_OPTIONS)(
@@ -336,8 +355,12 @@ if not train.modelSet():
         td=train.train_data.dataclass(),
         debug_outdir=train.outputDir+'/intplots',
         )
-    train.setCustomOptimizer(tf.keras.optimizers.Nadam(clipnorm=1.))
+    #train.setCustomOptimizer(tf.keras.optimizers.Nadam())#clipnorm=1.))
     train.compileModel(learningrate=1e-4)
+    #get pre norm layers
+    apply_weights_from_path(os.getenv("HGCALML")+"/models/pre_norm/model.h5", train.keras_model)
+
+
     train.keras_model.summary()
 
 ###############################################################################
@@ -348,8 +371,6 @@ if not train.modelSet():
 samplepath = train.val_data.getSamplePath(train.val_data.samples[0])
 PUBLISHPATH = ""
 PUBLISHPATH += [d  for d in train.outputDir.split('/') if len(d)][-1]
-RECORD_FREQUENCY = 10
-PLOT_FREQUENCY = 40
 
 cb = [NanSweeper()] #this takes a bit of time checking each batch but could be worth it
 cb += [
@@ -384,6 +405,8 @@ cb += [
             # 'ExtendedOCLoss_time_pred_std',
             '*regularise_gravnet_*',
             '*_gravReg*',
+            '*containment*',
+            '*contamination*',
             ],
         publish=PUBLISHPATH #no additional directory here (scp cannot create one)
         ),

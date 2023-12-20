@@ -36,6 +36,9 @@ global_layers_list['MLReductionMetrics'] = MLReductionMetrics
 from MetricsLayers import OCReductionMetrics
 global_layers_list['OCReductionMetrics'] = OCReductionMetrics
 
+from MetricsLayers import MLMeanStd
+global_layers_list['MLMeanStd'] = MLMeanStd
+
 #older layers
 
 from LayersRagged import RaggedSumAndScatter
@@ -78,6 +81,15 @@ global_layers_list['MixWhere']=MixWhere
 
 from GravNetLayersRagged import ValAndSign
 global_layers_list['ValAndSign']=ValAndSign
+
+from GravNetLayersRagged import SelectTracks
+global_layers_list['SelectTracks']=SelectTracks
+
+from GravNetLayersRagged import ScatterBackTracks
+global_layers_list['ScatterBackTracks']=ScatterBackTracks
+
+from GravNetLayersRagged import RandomOnes
+global_layers_list['RandomOnes']=RandomOnes
 
 from GravNetLayersRagged import SplitOffTracks
 global_layers_list['SplitOffTracks']=SplitOffTracks
@@ -248,6 +260,12 @@ global_layers_list['MessagePassing']=MessagePassing
 from GravNetLayersRagged import DistanceWeightedMessagePassing
 global_layers_list['DistanceWeightedMessagePassing']=DistanceWeightedMessagePassing
 
+from GravNetLayersRagged import TranslationInvariantMP
+global_layers_list['TranslationInvariantMP']=TranslationInvariantMP
+
+from GravNetLayersRagged import DWTICoordAttention
+global_layers_list['DWTICoordAttention']=DWTICoordAttention
+
 from GravNetLayersRagged import ApproxPCA
 global_layers_list['ApproxPCA']=ApproxPCA
 
@@ -377,6 +395,19 @@ from tensorflow.keras.layers import Layer
 import tensorflow.keras.backend as K
 import tensorflow as tf
 
+
+
+
+class DummyLayer(tf.keras.layers.Layer): 
+    '''
+    Just to make sure other layers are not optimised away
+    Inputs:
+    - list of tensors. First will be passed through, the other will be ignored
+    '''
+    def call(self, inputs):
+        return inputs[0]
+
+global_layers_list['DummyLayer']=DummyLayer
 
 class GroupSortActivation(tf.keras.layers.Layer): 
     

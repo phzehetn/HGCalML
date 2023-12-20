@@ -332,6 +332,10 @@ class plotClusterSummary(PredictCallback):
         return o
 
     def make_plot(self, counter, feat, predicted, truth):
+        print("making cluster plot", counter)
+        self._make_plot(counter, feat, predicted, truth)
+        return
+
         if self.plot_process is not None:
             self.plot_process.join(60)#safety margin to not block training if plotting took too long
             try:
@@ -370,14 +374,17 @@ class plotClusterSummary(PredictCallback):
         pids=[]
         vdtom=[]
         did=[]
+        ven=[]
         for i in range(eid):
-            a,b,pid = self.run_per_event(self.subdict(cdata,i==cdata['eid']))
+            a,b,pid,en = self.run_per_event(self.subdict(cdata,i==cdata['eid']))
             vdtom.append(a)
             did.append(b)
             pids.append(pid)
+            ven.append(en)
 
         vdtom = np.concatenate(vdtom, axis=0)
         did = np.concatenate(did,axis=0)
+        ven = np.concatenate(ven,axis=0)
         pids = np.concatenate(pids,axis=0)[:,0]
         upids = np.unique(pids).tolist()
         upids.append(0)
@@ -385,31 +392,40 @@ class plotClusterSummary(PredictCallback):
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
         print(upids)
-        for p in upids:
-            svdtom=vdtom
-            sdid=did
-            if p:
-                svdtom=vdtom[pids==p]
-                sdid=did[pids==p]
+        
+        energy_bins = [0, 10, 20, 40, 80, 100000]
 
-            if not len(svdtom):
-                continue
+        for i_e in range(len(energy_bins)-1):
+            for p in upids:
+                ensel = np.logical_and(ven >= energy_bins[i_e], ven < energy_bins[i_e+1])[:,0]
+                svdtom=vdtom[ensel]
+                sdid=did[ensel]
+                
 
-            fig = plt.figure()
-            plt.hist(svdtom,bins=51,color='tab:blue',alpha = 0.5,label='same')
-            plt.hist(sdid,bins=51,color='tab:orange',alpha = 0.5,label='other')
-            plt.xlabel('normalised distance')
-            plt.ylabel('A.U.')
-            plt.legend()
-            ccfile=self.outputfile+str(p)+'_cluster.pdf'
-            plt.savefig(ccfile)
-            plt.yscale('log')
-            ccfile=self.outputfile+str(p)+'_cluster_log.pdf'
-            plt.cla()
-            plt.clf()
-            plt.close(fig)
-            if self.publish is not None:
-                publish(ccfile, self.publish)
+                if p:
+                    svdtom=svdtom[pids[ensel]==p]
+                    sdid=sdid[pids[ensel]==p]
+    
+                if not len(svdtom):
+                    continue
+
+    
+                fig = plt.figure()
+                plt.hist(svdtom,bins=51,color='tab:blue',alpha = 0.5,label='same')
+                plt.hist(sdid,bins=51,color='tab:orange',alpha = 0.5,label='other')
+                plt.xlabel('normalised distance')
+                plt.ylabel('A.U.')
+                plt.legend()
+                ccfile=self.outputfile+str(p)+'_'+ str(energy_bins[i_e]) +'_' + str(energy_bins[i_e+1]) +'_cluster.pdf'
+                plt.savefig(ccfile)
+                plt.yscale('log')
+                ccfile=self.outputfile+str(p)+'_'+ str(energy_bins[i_e]) +'_' + str(energy_bins[i_e+1]) +'_cluster_log.pdf'
+                plt.cla()
+                plt.clf()
+                plt.close(fig)
+                if self.publish is not None:
+                    publish(ccfile, self.publish)
+
 
     def run_per_event(self,data):
 
@@ -420,6 +436,7 @@ class plotClusterSummary(PredictCallback):
 
         vtpid=[]
         vdtom = []
+        ven = []
         did = []
         for uidx in utidx:
             if uidx < 0:
@@ -430,6 +447,7 @@ class plotClusterSummary(PredictCallback):
             dist_ak = thisdist[ak]
 
             pid = np.abs(data['truthHitAssignedPIDs'][tidx==uidx])
+            en = np.abs(data['truthHitAssignedEnergies'][tidx==uidx])
 
             dtom = np.sqrt(np.sum( (thiscoords-coords_ak)**2, axis=-1)) / (np.abs(dist_ak)+1e-3)
             dtom[dtom>overflowat]=overflowat
@@ -442,12 +460,14 @@ class plotClusterSummary(PredictCallback):
 
             vtpid.append(pid)
             vdtom.append(dtom)
+            ven.append(en)
             did.append(dother)
 
         vtpid = np.concatenate(vtpid,axis=0)
         vdtom = np.concatenate(vdtom,axis=0)
         did = np.concatenate(did,axis=0)
-        return vdtom,did,vtpid
+        ven =np.concatenate(ven,axis=0)
+        return vdtom,did,vtpid,ven
 
 
 
@@ -637,7 +657,7 @@ class NanSweeper(tf.keras.callbacks.Callback):
         nw = []
         n_nans = 0
         for w,sw in zip(mw, self.saved_weights):
-            nw.append( tf.where( tf.math.is_finite(w), w, sw ).numpy())
+            nw.append( tf.where( tf.math.is_finite(w), w, sw/10. ).numpy())
             n_nans += tf.reduce_sum(
                 tf.cast(tf.logical_not(tf.math.is_finite(w)),'int32')
                         ).numpy()

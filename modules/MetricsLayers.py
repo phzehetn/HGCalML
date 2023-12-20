@@ -33,7 +33,9 @@ class MLBase(LayerWithMetrics):
     
     def call(self, inputs):
         self.metrics_call(inputs)
-        return inputs[0]
+        if isinstance(inputs, list):
+            return inputs[0]
+        return inputs
 
 class SimpleReductionMetrics(MLBase):
     
@@ -258,7 +260,14 @@ class MLReductionMetrics(MLBase):
             self.add_prompt_metric(n_track_after,self.name+'_tracks_after')
         
         
-        
-        
+
+class MLMeanStd(MLBase):        
+    
+    def metrics_call(self, inputs):
+        mean = tf.reduce_mean(inputs)
+        std = tf.math.reduce_std(inputs)
+        self.add_prompt_metric(mean,self.name+'_mean')
+        self.add_prompt_metric(std,self.name+'_std')
+
         
     

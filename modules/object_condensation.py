@@ -3,7 +3,7 @@
 import tensorflow as tf
 from oc_helper_ops import CreateMidx, SelectWithDefault
 from binned_select_knn_op import BinnedSelectKnn
-
+from wandb_interface import wandb_wrapper as wandb
 
 
 def huber(x, d):
@@ -84,16 +84,19 @@ class Basic_OC_per_sample(object):
         self.valid=False #constants not created
         
         
-    #helper
-    def _create_x_alpha_k(self): 
-        x_kalpha_m = tf.gather_nd(self.x_k_m,self.alpha_k, batch_dims=1) # K x C
-        if self.use_mean_x>0:
-            w_k_m = self.q_k_m * self.mask_k_m
-            x_kalpha_m_m = tf.reduce_sum(w_k_m * self.x_k_m,axis=1) # K x C
-            x_kalpha_m_m = tf.math.divide_no_nan(x_kalpha_m_m, tf.reduce_sum(w_k_m, axis=1)+1e-4)
-            x_kalpha_m = self.use_mean_x * x_kalpha_m_m + (1. - self.use_mean_x)*x_kalpha_m
-        
-        return x_kalpha_m 
+    def _weighted_alpha_k(self, v_k_m, w_k_m, fraction_wrt_alpha : float):
+        '''
+        vkm: V x V' x F
+        '''
+        w_k_m = w_k_m * self.mask_k_m
+        v_k_m_kalpha_m_m = tf.reduce_sum(w_k_m * v_k_m, axis=1) # K x F
+        wvk = tf.math.divide_no_nan(v_k_m_kalpha_m_m, tf.reduce_sum(w_k_m, axis=1)+1e-6) # K x F
+        if fraction_wrt_alpha > 1.-1e-6:
+            return wvk
+        ak = tf.gather_nd(v_k_m,self.alpha_k, batch_dims=1) # K x C    
+        return ak * (1. - fraction_wrt_alpha) + fraction_wrt_alpha * wvk
+    
+
     
     def create_Ms(self, truth_idx):
         self.Msel, self.Mnot, _ = CreateMidx(truth_idx, calc_m_not=True)
@@ -146,9 +149,12 @@ class Basic_OC_per_sample(object):
         self.alpha_k = tf.argmax(self.q_k_m, axis=1)# high beta and not spectator -> large q
         
         self.beta_k = tf.gather_nd(self.beta_k_m, self.alpha_k, batch_dims=1) # K x 1
-        self.x_k = self._create_x_alpha_k() #K x C
         self.q_k = tf.gather_nd(self.q_k_m, self.alpha_k, batch_dims=1) # K x 1
-        self.d_k = tf.gather_nd(self.d_k_m, self.alpha_k, batch_dims=1) # K x 1
+
+        # q weighted
+        self.x_k = self._weighted_alpha_k(self.x_k_m, self.q_k_m, self.use_mean_x) #K x C
+        # beta weighted
+        self.d_k = self._weighted_alpha_k(self.d_k_m, self.beta_k_m, self.use_mean_x) # K x 1
         
         #just a temp
         ow_k_m = SelectWithDefault(self.Msel, object_weight, 0.)
@@ -168,7 +174,7 @@ class Basic_OC_per_sample(object):
         N_k =  tf.reduce_sum(self.mask_k_m, axis=1)
         dsq_k_m = self.calc_dsq_att() #K x V-obj x 1
         sigma = self.weighted_d_k_m(dsq_k_m) #create gradients for all
-        dsq_k_m = tf.math.divide_no_nan(dsq_k_m, sigma + 1e-4)
+        dsq_k_m = tf.math.divide_no_nan(dsq_k_m, sigma**2 + 1e-4)
         V_att = self.att_func(dsq_k_m) * self.q_k_m * self.mask_k_m  #K x V-obj x 1
         V_att = self.q_k * tf.reduce_sum( V_att ,axis=1)  #K x 1
         if self.global_weight:
@@ -199,7 +205,6 @@ class Basic_OC_per_sample(object):
         
     def V_rep_k(self):
         
-        
         K = tf.reduce_sum(tf.ones_like(self.q_k))
         N_notk = tf.reduce_sum(self.Mnot, axis=1)
         #future remark: if this gets too large, one could use a kNN here
@@ -210,7 +215,7 @@ class Basic_OC_per_sample(object):
         #weight. tf.reduce_sum( tf.exp(-dsq) * d_v_e, , axis=1) / tf.reduce_sum( tf.exp(-dsq) )
         sigma = self.weighted_d_k_m(dsq) #create gradients for all, but prefer k vertex
         
-        dsq = tf.math.divide_no_nan(dsq, sigma + 1e-4) #K x V x 1
+        dsq = tf.math.divide_no_nan(dsq, sigma**2 + 1e-4) #K x V x 1
 
         V_rep = self.rep_func(dsq) * self.Mnot * tf.expand_dims(self.q_v,axis=0)  #K x V x 1
 
@@ -308,38 +313,50 @@ class Basic_OC_per_sample(object):
 
 
     def calc_metrics(self, energies):
+        wandb.log({'beta_k': wandb.Histogram(self.beta_k )})
         return self._calc_containment(energies), self._calc_contamination(energies)
+
     # metrics functions that can be called at the end, first calc containment, then contamination
     def _calc_containment(self, energies):
         '''
         energies as  V x 1
         '''
-         
-        x_k_alpha = tf.gather_nd(self.x_k_m,self.alpha_k, batch_dims=1) # K x C
-        #get mean minimum distance
-        d_x_k = (tf.expand_dims(x_k_alpha, axis=0) - tf.expand_dims(x_k_alpha, axis=1))**2  # K x K x C
-        d_x_k = tf.reduce_sum(d_x_k, axis=2) + 10000. * tf.eye(d_x_k.shape[0],d_x_k.shape[1])  # K x K , add large identity
-        d_m_x_k = tf.reduce_min(d_x_k, axis=1, keepdims=True)# K x 1
-        d_m_x_k = tf.sqrt(d_m_x_k)/self.d_k 
-        self.rel_metrics_radius = tf.reduce_mean(d_m_x_k) / 2. # ()
-
-        ##now metrics
-        dxk = tf.reduce_sum( (tf.expand_dims(x_k_alpha, axis=1) - self.x_k_m)**2 , axis= -1) #K x V'
-        
-        in_radius = self.rel_metrics_radius > tf.sqrt(dxk)/self.d_k #K x V'
-        in_radius = in_radius[...,tf.newaxis]
 
         energies_k_m = SelectWithDefault(self.Msel, energies, 0.) #K x V' x 1
         self.energies_k  = tf.reduce_sum(energies_k_m, axis=1) #K x 1
-        
+         
+        #x_k_alpha = tf.gather_nd(self.x_k_m, self.alpha_k, batch_dims=1) # K x C
+        #get mean minimum distance
+        d_k_k = (tf.expand_dims(self.x_k, axis=0) - tf.expand_dims(self.x_k, axis=1))**2  # K x K x C
+        d_k_k = tf.reduce_sum(d_k_k, axis=2) + 10000. * tf.eye(d_k_k.shape[0],d_k_k.shape[1])  # K x K , add large identity
+        d_m_k_k = tf.reduce_min(d_k_k, axis=1, keepdims=True)# K x 1
+        #relative to d_k
+        d_m_k_k = tf.sqrt(d_m_k_k)/self.d_k 
+        self.rel_metrics_radius = tf.reduce_mean(d_m_k_k) / 2. # ()
+
+        ##now metrics
+        dxk = tf.reduce_sum( (tf.expand_dims(self.x_k, axis=1) - self.x_k_m)**2 , axis= -1) #K x V'
+
+        in_radius = self.rel_metrics_radius > tf.sqrt(dxk)/self.d_k #K x V'
+        in_radius = in_radius[...,tf.newaxis]
+
         in_radius_energy = tf.reduce_sum(tf.where( in_radius, energies_k_m, 0. ), axis=1) # K x 1
         in_radius_energy /= self.energies_k
+
+        #log
+        wandb.log({ 
+                    'predicted_distance_k': wandb.Histogram(self.d_k ),
+                    'rel_metrics_radius': self.rel_metrics_radius,
+                    'containment_E10': tf.reduce_mean( in_radius_energy[self.energies_k < 10.] ),
+                    'containment_10E40': tf.reduce_mean( in_radius_energy[tf.logical_and(self.energies_k >= 10., self.energies_k < 40.)] ),
+                    'containment_40E': tf.reduce_mean( in_radius_energy[self.energies_k >= 40.] )})
+
+
         return tf.reduce_mean(in_radius_energy)
 
     def _calc_contamination(self, energies):
 
-        x_k_alpha = tf.gather_nd(self.x_k_m,self.alpha_k, batch_dims=1) 
-        dsq = tf.expand_dims(x_k_alpha, axis=1) - tf.expand_dims(self.x_v, axis=0) #K x V x C
+        dsq = tf.expand_dims(self.x_k, axis=1) - tf.expand_dims(self.x_v, axis=0) #K x V x C
         dsq = tf.reduce_sum(dsq**2, axis=-1)  #K x V 
         in_radius = self.rel_metrics_radius > tf.sqrt(dsq) / self.d_k# K x V
         
@@ -347,7 +364,13 @@ class Basic_OC_per_sample(object):
         energies_ir_all_k_v = tf.where(in_radius[...,tf.newaxis], energies_k_v , 0.)
         energies_ir_not_k_v = tf.where(in_radius[...,tf.newaxis], self.Mnot * energies_k_v , 0.)
         
-        rel_cont = tf.reduce_sum(energies_ir_not_k_v, axis=1)/tf.reduce_sum(energies_ir_all_k_v, axis=1)
+        rel_cont = tf.reduce_sum(energies_ir_not_k_v, axis=1)/(tf.reduce_sum(energies_ir_all_k_v, axis=1) + 1e-6)
+
+        #log
+        wandb.log({ 'contamination_E10': tf.reduce_mean( rel_cont[self.energies_k < 10.] )})
+        wandb.log({ 'contamination_10E40': tf.reduce_mean( rel_cont[tf.logical_and(self.energies_k >= 10., self.energies_k < 40.)] )})
+        wandb.log({ 'contamination_40E': tf.reduce_mean( rel_cont[self.energies_k >= 40.] )})
+
         return tf.reduce_mean(rel_cont)
     
 
@@ -612,7 +635,7 @@ class GraphCond_OC_per_sample(Basic_OC_per_sample):
                                      tf.reduce_sum(self.mask_k_m, axis=1) + 1e-3)
         return tf.debugging.check_numerics(pen,"GCOC: beta penalty")
     
-
+from wandb_interface import wandb_wrapper as wandb
 class OC_loss(object):
     def __init__(self, 
                  loss_impl=Basic_OC_per_sample,
@@ -639,7 +662,10 @@ class OC_loss(object):
             return tot_V_att, tot_V_rep, tot_Noise_pen, tot_B_pen, tot_pll,tot_too_much_B_pen
         batch_size = rs.shape[0] - 1
 
+        wandb.log({  'batch_size': batch_size})
+
         contai,contam = tf.constant(0,dtype='float32'),tf.constant(0,dtype='float32')
+        add_metrics = []
     
         for b in tf.range(batch_size):
             
@@ -657,14 +683,18 @@ class OC_loss(object):
                 tot_V_att, tot_V_rep, tot_Noise_pen, tot_B_pen, tot_pll,tot_too_much_B_pen
                 )
             if energies is not None: #just last batch is fine
-                ca,cm = self.loss_impl.calc_metrics(energies[rs[b]:rs[b + 1]])
-                contai += ca / float(batch_size)
-                contam += cm / float(batch_size)
-
+                tbm = self.loss_impl.calc_metrics(energies[rs[b]:rs[b + 1]])
+                if len(add_metrics) == 0:
+                    add_metrics = [t for t in tbm]
+                else:
+                    for i_m in range(len(tbm)):
+                        add_metrics[i_m] += tbm[i_m]
+                
         bs = tf.cast(batch_size, dtype='float32') + 1e-3
         out = [a/bs for a in [tot_V_att, tot_V_rep, tot_Noise_pen, tot_B_pen, tot_pll,tot_too_much_B_pen]]
+        add_metrics = [a/float(batch_size) for a in add_metrics]
         if energies is not None:
-            return out + [contai, contam]
+            return out + add_metrics
         return out, None, None
 
 

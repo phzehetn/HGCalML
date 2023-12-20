@@ -108,19 +108,25 @@ struct AccumulateKnnOpFunctor<GPUDevice, dummy> {
        // int gridsize=56;
       //  int blocksize=768;
       //  int numSMs = d.getNumCudaMultiProcessors();
+        int total_threads = 512;
 
         //just simple 1 thread per vertex
+        grid_and_block feat_par(n_vert, total_threads/8, n_feat, 8);
+        if(n_feat >= 32)
+            feat_par=grid_and_block(n_vert, total_threads/32, n_feat, 32);
+        if(n_feat >= 64)
+            feat_par=grid_and_block(n_vert, total_threads/64, n_feat, 64);
+        if(n_feat >= 128)
+            feat_par=grid_and_block(n_vert, total_threads/128, n_feat, 128);
 
-        //for GTX1080, also make some opt for V100
-
-        grid_and_block par(n_vert, 512, n_feat, 2);
+        //grid_and_block par(n_vert, 512, n_feat, 2); 
 
         //just some default optimisation for now
       //  cudaOccupancyMaxPotentialBlockSize(&gridsize,&blocksize,acc_knn_kernel);
 
      //   std::cout << "opt grid" << gridsize << " opt block " << blocksize << " numSM " << numSMs << std::endl;
 
-        acc_knn_kernel<<<par.grid(), par.block(), 0, d.stream()>>>(
+        acc_knn_kernel<<<feat_par.grid(), feat_par.block(), 0, d.stream()>>>(
                 d_distances,
                 d_feat,
                 d_idxs,

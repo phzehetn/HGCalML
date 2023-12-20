@@ -21,6 +21,16 @@ from Initializers import EyeInitializer
 from oc_helper_ops import SelectWithDefault
 from baseModules import LayerWithMetrics
 
+def layernorm(x, return_norm=False):
+    #x = x - tf.reduce_mean(x,axis=-1, keepdims=True)
+    norm = tf.reduce_sum(x**2, axis=-1,keepdims=True)
+    norm = tf.sqrt(norm+1e-6)
+    if return_norm:
+        x = tf.concat([x / norm * tf.sqrt(tf.cast(x.shape[-1],'float32')), norm], axis=-1)
+    else:
+        x = x / norm * tf.sqrt(tf.cast(x.shape[-1],'float32'))
+    return x
+
 #helper
 #def AccumulateKnnRS(distances,  features, indices,
 #                  mean_and_max=True,):
@@ -48,7 +58,7 @@ class RandomSampling(tf.keras.layers.Layer):
     On average it reduces the number of points by `reduction` factor.
     If the reduction factor is chosen to be very high it is possible to
     lose all points in a single event. In this case the reduction factor
-    will be changed on the fly to the hightes value that still leaves at
+    will be changed on the fly to the highest value that still leaves at
     least one event in every point cloud.
     """
 
@@ -401,6 +411,107 @@ class ValAndSign(tf.keras.layers.Layer):
         s = tf.sign(inputs)
         v = tf.abs(inputs)
         return tf.concat([s,v],axis=-1)
+
+class SelectTracks(tf.keras.layers.Layer):
+    def __init__(self, return_rs=True, **kwargs):
+        '''
+        This layer simply selects the tracks from a tensor
+
+        inputs:
+        - A: track identifier (non-zero for tracks), or indices of tracks if no rs provided
+        - B: a tensor
+        - C: row splits (if not provided, will act as simple selector, then return_rs also False)
+
+        Outputs:
+        - selected tracks
+        - original indices of tracks
+        - row splits (if option is set)
+        '''
+        super(SelectTracks, self).__init__(**kwargs)
+        self.return_rs = return_rs
+
+    def get_config(self):
+        base_config = super(SelectTracks, self).get_config()
+        return dict(list(base_config.items()) + list({'return_rs': self.return_rs}.items()))
+
+    def call(self, inputs):
+        assert len(inputs) == 3 or len(inputs) == 2
+        if len(inputs) == 3:
+            istrack, a_in, rs = inputs
+        elif len(inputs) == 2:
+            istrack, a_in = inputs
+            rs = None
+        
+        if len(inputs) == 3:
+            # create indices for each axis=0 element
+            ridxs = tf.range(tf.shape(a_in)[0])[..., tf.newaxis]
+            # select those indices that are tracks
+            tidx = tf.boolean_mask(ridxs, istrack>0)
+            # select the track properties in the tensor a
+        else:
+            tidx = istrack
+
+        a = tf.gather(a_in, tidx, axis=0)
+        a = tf.reshape(a, [-1, a_in.shape[1]])#for defined output shape
+
+        if self.return_rs and rs is not None:
+            ristrack = tf.RaggedTensor.from_row_splits(istrack>0,rs)
+            rs = tf.reduce_sum(tf.cast(ristrack, 'int32'),axis=1)
+            rs = rs[:,0]
+            rs = tf.concat([tf.constant([0],dtype='int32'),rs],axis=0)
+            rs = tf.math.cumsum(rs,axis=0)
+            with tf.control_dependencies([tf.assert_equal(rs[-1], tf.shape(a)[0])]): #safety
+                return a, tidx, rs
+        if len(inputs) == 3:
+            return a, tidx
+        return a #only apply indices mode
+
+class ScatterBackTracks(tf.keras.layers.Layer):
+    def __init__(self, **kwargs):
+        '''
+        This layer scatters back the tracks into a tensor
+
+        inputs:
+        - A: track identifier (non-zero for tracks) - used for size
+        - B: a tensor
+        - C: indices of tracks
+
+        Outputs:
+        - scattered back tracks, padded with zeros
+        '''
+        super(ScatterBackTracks, self).__init__(**kwargs)
+
+    def call(self, inputs):
+        istrack, a_in, tidx = inputs
+        # take the indices and scatter back to a tensor of size istrack and otherwise shape of a
+        # this will scatter the tracks back to their original position
+        a = tf.scatter_nd(tidx[...,tf.newaxis], a_in, (tf.shape(istrack)[0], tf.shape(a_in)[1]))
+        a = tf.reshape(a, [-1, a_in.shape[1]])#for defined output shape
+        return a
+
+class RandomOnes(tf.keras.layers.Layer):
+    def __init__(self, fraction, **kwargs):
+        '''
+        This layer creates a random mask of ones and zeros
+
+        inputs:
+        - A: row splits
+
+        Outputs:
+        - random mask
+        '''
+        super(RandomOnes, self).__init__(**kwargs)
+        self.fraction = fraction
+
+    def get_config(self):
+        base_config = super(RandomOnes, self).get_config()
+        return dict(list(base_config.items()) + list({'fraction': self.fraction}.items()))
+    
+    def call(self, inputs):
+        rs = inputs
+        f = tf.random.uniform(shape=(rs[-1],1), minval=0, maxval=1) < self.fraction
+        f = tf.cast(f, 'float32')
+        return f
 
 
 class SplitOffTracks(tf.keras.layers.Layer):
@@ -1314,7 +1425,7 @@ class SignedScaledGooeyBatchNorm(ScaledGooeyBatchNorm):
 
 class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
     def __init__(self,
-                 viscosity=0.01,
+                 viscosity=1e-9,#start at almost zero
                  fluidity_decay=1e-4,
                  max_viscosity=0.99999,
                  no_gaus = True,
@@ -1322,6 +1433,8 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
                  invert_condition=False,
                  _promptnames=None, #compatibility, does nothing
                  record_metrics=False, #compatibility, does nothing
+                 learn = False,
+                 no_bias_gamma = False,
                  **kwargs):
         '''
         Input features (or [features, condition]), output: normed features
@@ -1350,6 +1463,8 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         self.epsilon = epsilon
         self.no_gaus = no_gaus
         self.invert_condition = invert_condition
+        self.learn = learn
+        self.no_bias_gamma = no_bias_gamma
 
     def compute_output_shape(self, input_shapes):
         #return input_shapes[0]
@@ -1363,7 +1478,9 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
                   'max_viscosity': self.max_viscosity,
                   'epsilon': self.epsilon,
                   'no_gaus': self.no_gaus,
-                  'invert_condition': self.invert_condition
+                  'invert_condition': self.invert_condition,
+                  'learn': self.learn,
+                  'no_bias_gamma': self.no_bias_gamma
                   }
         base_config = super(ScaledGooeyBatchNorm2, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -1378,14 +1495,14 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
             shape = (1,)+input_shapes[1:]
 
         self.bias = self.add_weight(name = 'bias',shape = shape,
-                                    initializer = 'zeros', trainable = self.trainable)
+                                    initializer = 'zeros', trainable = self.trainable and not self.no_bias_gamma)
         self.gamma = self.add_weight(name = 'gamma',shape = shape,
-                                    initializer = 'ones', trainable = self.trainable)
-
+                                    initializer = 'ones', trainable = self.trainable and not self.no_bias_gamma)
+    
         self.mean = self.add_weight(name = 'mean',shape = shape,
-                                    initializer = 'zeros', trainable =  False)
+                                    initializer = 'zeros', trainable =  self.learn and self.trainable)
         self.den = self.add_weight(name = 'den',shape = shape,
-                                    initializer = 'ones', trainable =  False)
+                                    initializer = 'ones', trainable =  self.learn and self.trainable)
         self.viscosity = tf.Variable(initial_value=self.viscosity_init,
                                          name='viscosity',
                                          trainable=False,dtype='float32')
@@ -1403,6 +1520,8 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         return x
 
     def _calc_update(self, old, new, training, visc=None):
+        if not self.trainable:
+            return old
         if visc is None:
             visc = self.viscosity
         delta = new-old
@@ -1410,6 +1529,8 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         return tf.keras.backend.in_train_phase(update,old,training=training)
 
     def _update_viscosity(self, training):
+        if not self.trainable:
+            return
         if self.fluidity_decay > 0:
             newvisc = self.viscosity + (self.max_viscosity - self.viscosity)*self.fluidity_decay
             newvisc = tf.keras.backend.in_train_phase(newvisc,self.viscosity,training=training)
@@ -1422,15 +1543,14 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
 
         out = (x_in - ngmean) / (tf.abs(ngden) + self.epsilon)
         out = out*self.gamma + self.bias
-        if self.invert_condition:
-            return tf.where(cond<=0.5,  out, x_in)
-        else:
-            return tf.where(cond>0.5,  out, x_in)
+        return tf.where(cond>0.5,  out, x_in)
 
     def call(self, inputs, training=None):
         if isinstance(inputs,list):
             x_in, cond = inputs
             cond = tf.where(cond > 0.5, tf.ones_like(cond), 0.) #make sure it's ones and zeros
+            if self.invert_condition:
+                cond = 1.-cond
         else:
             x_in = inputs
             cond = tf.ones_like(x_in[...,0:1])
@@ -1441,7 +1561,7 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         #x = x_in #maybe don't stop the gradient?
         x_m = self._calc_mean_and_protect(x, cond, self.mean)
 
-        diff_to_mean = tf.abs(x - self.mean) #self.mean or x_m
+        diff_to_mean = tf.abs(x - x_m) #self.mean) #self.mean or x_m -> self.mean over-corrects
         if not self.no_gaus:
             diff_to_mean = diff_to_mean**2
 
@@ -1450,14 +1570,18 @@ class ScaledGooeyBatchNorm2(tf.keras.layers.Layer):
         if not self.no_gaus:
             x_std = tf.sqrt(x_std + self.epsilon)
 
-
-        update = self._calc_update(self.mean,x_m,training)
-        tf.keras.backend.update(self.mean, update)
-
-        update = self._calc_update(self.den,x_std,training)
-        tf.keras.backend.update(self.den, update)
-
-        self._update_viscosity(training)
+        #tf.print(self.name, 'p_loss',p_loss, tf.reduce_mean(self.mean), tf.reduce_mean(self.den))
+        if self.learn:
+            p_loss = tf.reduce_mean( (self.mean-x_m)**2 +  (self.den-x_std)**2 )
+            self.add_loss(p_loss)
+        else:
+            update = self._calc_update(self.mean,x_m,training)
+            tf.keras.backend.update(self.mean, update)
+    
+            update = self._calc_update(self.den,x_std,training)
+            tf.keras.backend.update(self.den, update)
+    
+            self._update_viscosity(training)
 
         out = self._calc_out(x_in, cond)
 
@@ -2125,15 +2249,16 @@ class SelectFromIndicesWithPad(tf.keras.layers.Layer):
     options:
     - default value
     '''
-    def __init__(self, default = 0., **kwargs):
+    def __init__(self, default = 0., subtract_self = False, **kwargs):
         self.default = default
+        self.subtract_self = subtract_self
         if 'dynamic' in kwargs:
             super(SelectFromIndicesWithPad, self).__init__(**kwargs)
         else:
             super(SelectFromIndicesWithPad, self).__init__(dynamic=False,**kwargs)
 
     def get_config(self):
-        config = {'default': self.default}
+        config = {'default': self.default, 'subtract_self': self.subtract_self}
         base_config = super(SelectFromIndicesWithPad, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
@@ -2143,6 +2268,8 @@ class SelectFromIndicesWithPad(tf.keras.layers.Layer):
     def call(self, inputs):
         assert len(inputs)==2
         out = SelectWithDefault(inputs[0], inputs[1], self.default)
+        if self.subtract_self:
+            out -= inputs[1][:,tf.newaxis,:]
         return out
 
 
@@ -3735,6 +3862,157 @@ class DistanceWeightedMessagePassing(tf.keras.layers.Layer):
         x, neighbor_indices, distancesq = inputs
         return self.create_output_features(x, neighbor_indices, distancesq)
 
+
+class TranslationInvariantMP(tf.keras.layers.Layer):
+    def __init__(self,
+                 n_feature_transformation,
+                 activation='elu',
+                 mean=True,
+                 layer_norm = False,
+                 sum_weight=False,
+                 **kwargs):
+        super(TranslationInvariantMP, self).__init__(**kwargs)
+
+        self.n_feature_transformation = n_feature_transformation
+        self.activation = activation
+        self.mean = mean
+        self.layer_norm = layer_norm
+        self.sum_weight = sum_weight
+        self.feature_tranformation_dense = []
+        for i in range(len(self.n_feature_transformation)):
+            with tf.name_scope(self.name + "/" + str(i)):
+                self.feature_tranformation_dense.append(
+                    tf.keras.layers.Dense(n_feature_transformation[i], activation=activation, use_bias = i>0))
+
+
+    def build(self, input_shapes):
+        input_shape = input_shapes[0]
+
+        with tf.name_scope(self.name + "/" + str(0)):
+            self.feature_tranformation_dense[0].build(input_shape)
+
+        for i in range(1, len(self.feature_tranformation_dense)):
+            with tf.name_scope(self.name + "/" + str(i)):
+                self.feature_tranformation_dense[i].build((input_shape[0], self.n_feature_transformation[i - 1]))
+
+        super(TranslationInvariantMP, self).build(input_shapes)
+
+
+    def compute_output_shape(self, inputs_shapes):
+        fshape = inputs_shapes[0][-1]
+        return (None, sum(self.n_feature_transformation))
+
+
+    def get_config(self):
+        config = {'n_feature_transformation': self.n_feature_transformation,
+                  'activation': self.activation,
+                  'mean': self.mean,
+                  'layer_norm': self.layer_norm,
+                  'sum_weight': self.sum_weight
+        }
+        base_config = super(TranslationInvariantMP, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+    def create_output_features(self, x, neighbour_indices, distancesq):
+        allfeat = []
+        features = x
+        K = tf.cast(neighbour_indices.shape[1], 'float32')
+
+        for i in range(len(self.n_feature_transformation)):
+            
+            if self.layer_norm:
+                features = layernorm(features)
+            prev_feat = features
+
+            if self.mean:
+                #add a 1 to the features for translation invariance later
+                if i==0:
+                    ones = tf.ones_like(features[:,0:1])
+                    features = tf.concat([ones, features], axis=-1)
+    
+                # Standard Message Passing
+                features = AccumulateKnn(
+                    10.*distancesq,
+                    features,
+                    neighbour_indices,
+                    mean_and_max=False)[0] * K
+    
+                # this is only necessary for the first exchange, afterwards the features are already translation independent
+                if i==0:
+                    minus_xi = features[:,0:1]
+                    features = features[:,1:]
+                    features -= prev_feat * minus_xi
+
+                if self.sum_weight:
+                    wsum = tf.math.divide_no_nan(K, tf.reduce_sum( tf.exp(-10.*distancesq), axis=1, keepdims=True) + 1e-2)#large eps
+                    features *= wsum
+            else: #max
+                nfeat = SelectWithDefault(neighbour_indices, features,-2.)
+                features = tf.reduce_max(tf.exp(-10.*distancesq) * nfeat - features[:,tf.newaxis,:], axis=1) * K
+
+            t = self.feature_tranformation_dense[i]
+            features = t(features / K) #divide by K here again
+            allfeat.append(features)
+
+        features = tf.concat(allfeat, axis=-1)
+        return features
+
+
+    def call(self, inputs):
+        x, neighbor_indices, distancesq = inputs
+        return self.create_output_features(x, neighbor_indices, distancesq)
+
+
+class DWTICoordAttention(tf.keras.layers.Layer):
+
+    def __init__(self, n_heads, **kwargs):
+        '''
+        This layer will be hard on memory! But maybe ok on an 80gb A100
+
+        Inputs: 
+        - feat
+        - coords
+        - nidx
+        - distsq (from KNN)
+
+        '''
+        super(DWTICoordAttention, self).__init__(**kwargs)
+        self.n_heads = n_heads
+        with tf.name_scope(self.name + "/att"):
+            self.att_transform_a = tf.keras.layers.Dense(n_heads, activation='elu')
+            self.att_transform_b = tf.keras.layers.Dense(n_heads)
+
+    def get_config(self):
+        base_config = super(DistanceWeightedAttentionMP, self).get_config()
+        return dict(list(base_config.items()) + list({'n_heads': self.n_heads}.items()))
+
+    def build(self, input_shapes):
+        input_shape = input_shapes[1]
+        with tf.name_scope(self.name + "/att"):
+            self.att_transform_a.build(input_shape)
+            self.att_transform_b.build(input_shape)#same
+
+    def call(self,inputs):
+        assert len(inputs) == 4
+        feat, coords, nidx, distsq = inputs
+        rncoords = SelectWithDefault(nidx, coords, 0.) - coords[:,tf.newaxis,:]
+        # reshape for defined shape for dense
+        rncoords = tf.reshape(rncoords, [-1, rncoords.shape[1], coords.shape[1]])
+        # calc attention
+        a = self.att_transform_a(rncoords)
+        a = self.att_transform_b(a)
+        a = tf.nn.softmax(a, axis=1) #mind the axis V x K x A
+        # weight attention by GN like distance in addition
+        a = tf.exp(-10.*distsq) * a
+
+        #now the big one
+        rnfeat = SelectWithDefault(nidx, feat, 0.) - feat[:,tf.newaxis,:] # V x K x F
+        #now even bigger
+        arnfeat = a[:,:,:,tf.newaxis] * rnfeat[:,:,tf.newaxis,:] # V x K x A x F
+        fsum = tf.reduce_sum(arnfeat, axis=1) # V x A x F
+        #'concat'
+        return tf.reshape(fsum, [-1, self.n_heads * feat.shape[1]])
 
 class DistanceWeightedAttentionMP(DistanceWeightedMessagePassing):
     def __init__(self,

@@ -2550,6 +2550,7 @@ class LLFullObjectCondensation(LossLayerBase):
         if containment is not None:
             self.add_prompt_metric(containment,self.name+'_containment')
             self.add_prompt_metric(contamination,self.name+'_contamination')
+            self.add_prompt_metric(containment-contamination,self.name+'_cont_diff') # simpler 1-valued metric
 
 
         att *= self.potential_scaling
