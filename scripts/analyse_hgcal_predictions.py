@@ -14,7 +14,7 @@ import numpy as np
 import tensorflow as tf
 
 from OCHits2Showers import OCHits2ShowersLayer, OCHits2ShowersLayer_HDBSCAN
-from OCHits2Showers import process_endcap2, OCGatherEnergyCorrFac2
+from OCHits2Showers import process_endcap2, OCGatherEnergyCorrFac_new
 from ShowersMatcher2 import ShowersMatcher
 from hplots.hgcal_analysis_plotter import HGCalAnalysisPlotter
 import extra_plots as ep
@@ -64,7 +64,7 @@ def analyse(preddir,
             local_distance_scaling)
     showers_matcher = ShowersMatcher(matching_mode, iou_threshold, de_e_cut, angle_cut)
 
-    energy_gatherer = OCGatherEnergyCorrFac2()
+    energy_gatherer = OCGatherEnergyCorrFac_new()
 
     files_to_be_tested = [
         os.path.join(preddir, x)
