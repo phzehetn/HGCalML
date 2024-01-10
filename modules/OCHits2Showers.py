@@ -251,6 +251,61 @@ class OCGatherEnergyCorrFac2(tf.keras.layers.Layer):
             return pred_energy_hits[:, tf.newaxis]
 
 
+class OCGatherEnergyCorrFac_new(tf.keras.layers.Layer):
+    def __init__(self, **kwargs):
+        super(OCGatherEnergyCorrFac2, self).__init__(**kwargs)
+
+    def call(self,
+             pred_sid,
+             pred_corr_factor,
+             rechit_energy,
+             no_noise_idx,
+             pred_beta,
+             is_track=None,
+             return_tracks_where_possible=True,
+             return_tracks=False,
+             raw=False,
+             alpha_idx_tracks=None,
+             alpha_idx_hits=None):
+        """
+        Same as `OCGatherEnergyCorrFac` with the addition that one can chose if the energy
+        reconstructed with the tracks or the enery reconstructed by the calorimeter should be used.
+        Shapes:
+            * rechit_energy, is_track:      [N_orig, 1]     (before noise filter)
+            * pred_sid, pred_corr_factor:   [N_filtered, 1] (after noise filter)
+            * pred_beta:                    [N_filtered, 1] (after noise filter)
+            * no_noise_idx:                 [N_filtered, 1] (with indices up to N_orig as entries)
+        Returns:
+            Will always return only one value:
+                return_tracks_where_possible overrides `return_tracks`
+            By default returns hit energy
+        """
+
+        is_track = tf.cast(is_track, tf.int32)
+
+        pred_sid_p1 = pred_sid +1 # For the -1 label for noise
+        pred_corr_factor = tf.where(pred_sid==-1, tf.zeros_like(pred_corr_factor, tf.float32), pred_corr_factor)
+        rechit_energy = tf.where(pred_sid==-1, tf.zeros_like(rechit_energy, tf.float32), rechit_energy)
+
+        e_hit = tf.where(is_track==0, rechit_energy, tf.zeros_like(rechit_energy))
+        e_track = tf.where(is_track==1, rechit_energy, tf.zeros_like(rechit_energy))
+        beta_hit = tf.where(is_track==0, pred_beta, tf.zeros_like(pred_beta))
+        beta_track = tf.where(is_track==1, pred_beta, tf.zeros_like(pred_beta))
+        e_hit_shower = tf.math.unsorted_segment_sum(
+            e_hit[:,0], pred_sid_p1[:,0], num_segments=(tf.reduce_max(pred_sid_p1)+1)
+        )
+        e_track_shower = tf.math.unsorted_segment_sum(
+            e_track[:,0], pred_sid_p1[:,0], num_segments=(tf.reduce_max(pred_sid_p1)+1)
+        )
+        correction_hits = pred_corr_factor[alpha_idx_hits]
+        correction_tracks = pred_corr_factor[alpha_idx_tracks]
+        e_hit_shower_corrected = e_hit_shower * correction_hits
+        e_track_shower_corrected = e_track_shower * correction_tracks
+
+
+        return e_hit_shower, e_track_shower, e_hit_shower_corrected, e_track_shower_corrected
+
+
 
 class OCGatherEnergyHitsOrTracks(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
@@ -270,7 +325,7 @@ class OCGatherEnergyHitsOrTracks(tf.keras.layers.Layer):
             raw=False):
         """
         Collects energy of hits belonging to showers.
-        Default: 
+        Default:
             1. Check if a track is part of the shower.
                 1.1 If exactly one track is part of the shower
                     -> Return (corrected)track energy
@@ -280,7 +335,7 @@ class OCGatherEnergyHitsOrTracks(tf.keras.layers.Layer):
                     -> Ignore tracks (and their correction factor)
             2. Sum over all hits in the shower
             3. Multiply hits by correction factor of hit with highes beta value
-        
+
         Shapes:
             * rechit_energy, is_track:      [N_orig, 1]     (before noise filter)
             * pred_sid, pred_corr_factor:   [N_filtered, 1] (after noise filter)
@@ -441,7 +496,7 @@ class OCHits2ShowersLayer(tf.keras.layers.Layer):
 
 
 def OCHits2ShowersLayer_HDBSCAN(pred_ccoords, pred_beta, pred_dist, min_cluster_size=5, min_samples=None,
-        mask_center=None, mask_radius=None):
+        mask_center=None, mask_radius=None, is_track=None):
     """
     Functions that fills the same role as the class `OCHits2ShowersLayer` but uses HDBSCAN
     instead of the simple clustering algorithm.
@@ -463,6 +518,7 @@ def OCHits2ShowersLayer_HDBSCAN(pred_ccoords, pred_beta, pred_dist, min_cluster_
         - _                             don't know what it is
         - _                             number of condensates?
     """
+    is_track = tf.cast(is_track, tf.bool)
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size = min_cluster_size,
         min_samples = min_samples,
@@ -477,7 +533,7 @@ def OCHits2ShowersLayer_HDBSCAN(pred_ccoords, pred_beta, pred_dist, min_cluster_
         # alpha = shower_indices[np.argmax(beta)]     # maps back to orig index
         # center = pred_ccoords[alpha]
         center_mask = np.linalg.norm(pred_ccoords - mask_center, axis=1) < mask_radius
-        
+
         pred_ccoords = pred_ccoords[center_mask]
         pred_beta = pred_beta[center_mask]
         index = index[center_mask]
@@ -485,13 +541,24 @@ def OCHits2ShowersLayer_HDBSCAN(pred_ccoords, pred_beta, pred_dist, min_cluster_
     clusterer.fit(pred_ccoords)
     pred_sid = clusterer.labels_
     alpha_idx = []
+    alpha_idx_track = []
+    alpha_idx_hit = []
     for sid in np.unique(pred_sid):
         mask = pred_sid == sid
+        mask_track = tf.logical_and(mask, is_track)
+        mask_hit = tf.logical_and(mask, ~is_track)
         if sid == -1:
             continue
         beta = pred_beta[mask]                              # shape (n_shower,)
         shower_indices = index[mask]                        # shape (n_shower,)
+        beta_hit = beta[mask_hit]
+        beta_track = beta[mask_track]
+        shower_indices_hit = shower_indices[mask_hit]
+        shower_indices_track = shower_indices[mask_track]
+        alpha_idx_hit.append(shower_indices_hit[np.argmax(beta_hit)])
+        alpha_idx_track.append(shower_indices_track[np.argmax(beta_track)])
         alpha_idx.append(shower_indices[np.argmax(beta)])
+
     alpha_idx = np.array(alpha_idx)
     # turn pred_sid to int32
     pred_sid = pred_sid.astype(np.int32)
@@ -501,7 +568,7 @@ def OCHits2ShowersLayer_HDBSCAN(pred_ccoords, pred_beta, pred_dist, min_cluster_
         tmp[center_mask] = pred_sid
         pred_sid = tf.cast(tmp, tf.int32)
 
-    return pred_sid[:, np.newaxis], None, alpha_idx, None, None
+    return pred_sid[:, np.newaxis], None, alpha_idx, alpha_idx_track, alpha_idx_hit
 
 
 def process_endcap2(hits2showers_layer, energy_gather_layer, features_dict,
@@ -530,7 +597,7 @@ def process_endcap2(hits2showers_layer, energy_gather_layer, features_dict,
                 predictions_dict['pred_dist'])
     else:
         # Assume that we use the new clustering algorithm hdbscan
-        pred_sid, _, alpha_idx, _, ncond = hits2showers_layer(
+        pred_sid, _, alpha_idx, alpha_idx_tracks, alpha_idx_hits = hits2showers_layer(
                 predictions_dict['pred_ccoords'],
                 predictions_dict['pred_beta'],
                 predictions_dict['pred_dist'],
@@ -547,103 +614,39 @@ def process_endcap2(hits2showers_layer, energy_gather_layer, features_dict,
     processed_pred_dict['pred_sid'] = pred_sid
 
 
-    pred_energy_hits = energy_gather_layer(
-            pred_sid,
-            predictions_dict['pred_energy_corr_factor'],
-            features_dict['recHitEnergy'],
-            predictions_dict['no_noise_sel'],
-            predictions_dict['pred_beta'],
-            is_track = is_track,
-            return_tracks_where_possible=False,
-            return_tracks=False,
-            raw=False,
-            )
+    pred_energy_hits, pred_energy_hits_corrected, pred_energy_tracks, pred_energy_tracks_corrected = energy_gather_layer(
+        pred_sid,
+        predictions_dict['pred_energy_corr_factor'],
+        features_dict['recHitEnergy'],
+        predictions_dict['no_noise_sel'],
+        predictions_dict['pred_beta'],
+        is_track = is_track,
+        return_tracks_where_possible=False,
+        return_tracks=False,
+        raw=False,
+        alpha_idx_tracks=alpha_idx_tracks,
+        alpha_idx_hits=alpha_idx_hits,
+        )
 
-    pred_energy_tracks = energy_gather_layer(
-            pred_sid,
-            predictions_dict['pred_energy_corr_factor'],
-            features_dict['recHitEnergy'],
-            predictions_dict['no_noise_sel'],
-            predictions_dict['pred_beta'],
-            is_track = is_track,
-            return_tracks_where_possible=False,
-            return_tracks=True,
-            raw=False,
-            )
-
-    pred_energy_comb = energy_gather_layer(
-            pred_sid,
-            predictions_dict['pred_energy_corr_factor'],
-            features_dict['recHitEnergy'],
-            predictions_dict['no_noise_sel'],
-            predictions_dict['pred_beta'],
-            is_track = is_track,
-            return_tracks_where_possible=True,
-            return_tracks=False,
-            raw=False,
-            )
-
-    pred_energy_hits_raw = energy_gather_layer(
-            pred_sid,
-            predictions_dict['pred_energy_corr_factor'],
-            features_dict['recHitEnergy'],
-            predictions_dict['no_noise_sel'],
-            predictions_dict['pred_beta'],
-            is_track = is_track,
-            return_tracks_where_possible=False,
-            return_tracks=False,
-            raw=True,
-            )
-
-    pred_energy_tracks_raw = energy_gather_layer(
-            pred_sid,
-            predictions_dict['pred_energy_corr_factor'],
-            features_dict['recHitEnergy'],
-            predictions_dict['no_noise_sel'],
-            predictions_dict['pred_beta'],
-            is_track = is_track,
-            return_tracks_where_possible=False,
-            return_tracks=True,
-            raw=True,
-            )
-
-    pred_energy_comb_raw = energy_gather_layer(
-            pred_sid,
-            predictions_dict['pred_energy_corr_factor'],
-            features_dict['recHitEnergy'],
-            predictions_dict['no_noise_sel'],
-            predictions_dict['pred_beta'],
-            is_track = is_track,
-            return_tracks_where_possible=True,
-            return_tracks=False,
-            raw=raw,
-            )
 
     if energy_mode == 'hits':
         if raw:
-            processed_pred_dict['pred_energy'] = pred_energy_hits_raw.numpy()
-        else:
             processed_pred_dict['pred_energy'] = pred_energy_hits.numpy()
+        else:
+            processed_pred_dict['pred_energy'] = pred_energy_hits_corrected.numpy()
     elif energy_mode == 'tracks':
         if raw:
-            processed_pred_dict['pred_energy'] = pred_energy_tracks_raw.numpy()
-        else:
             processed_pred_dict['pred_energy'] = pred_energy_tracks.numpy()
-    elif energy_mode == 'combined':
-        if raw:
-            processed_pred_dict['pred_energy'] = pred_energy_comb_raw.numpy()
         else:
-            processed_pred_dict['pred_energy'] = pred_energy_comb.numpy()
+            processed_pred_dict['pred_energy'] = pred_energy_tracks_corrected.numpy()
     else:
         print("Unrecognized energy_mode")
         sys.exit(1)
 
-    processed_pred_dict['pred_energy_hits'] = pred_energy_hits.numpy()
-    processed_pred_dict['pred_energy_tracks'] = pred_energy_tracks.numpy()
-    processed_pred_dict['pred_energy_comb'] = pred_energy_comb.numpy()
-    processed_pred_dict['pred_energy_hits_raw'] = pred_energy_hits_raw.numpy()
-    processed_pred_dict['pred_energy_tracks_raw'] = pred_energy_tracks_raw.numpy()
-    processed_pred_dict['pred_energy_comb_raw'] = pred_energy_comb_raw.numpy()
+    processed_pred_dict['pred_energy_hits_corrected'] = pred_energy_hits_corrected.numpy()
+    processed_pred_dict['pred_energy_tracks_corrected'] = pred_energy_tracks_corrected.numpy()
+    processed_pred_dict['pred_energy_hits_raw'] = pred_energy_hits.numpy()
+    processed_pred_dict['pred_energy_tracks_raw'] = pred_energy_tracks.numpy()
 
     if 'pred_energy_high_quantile' in predictions_dict.keys():
         processed_pred_dict['pred_energy_unc'] \
