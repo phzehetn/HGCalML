@@ -207,11 +207,14 @@ class ShowersMatcher:
                     node_attributes[k] = self.predictions_dict[k][self.pred_alpha_idx[i]]
                     # Same as 'else' should work.
                 else:
-                    # print("X", k)
+                    if i == 00:
+                        print("X", k)
+                        print("X", type(self.predictions_dict[k][self.pred_alpha_idx[i],0]))
                     node_attributes[k] = self.predictions_dict[k][self.pred_alpha_idx[i], 0]
             node = (pred_shower_sid[i], node_attributes)
             node_attributes['type'] = ShowersMatcher._NODE_TYPE_PRED_SHOWER
 
+            pdb.set_trace()
             pred_nodes.append(node)
 
         graph.add_nodes_from(pred_nodes)

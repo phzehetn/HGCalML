@@ -110,6 +110,7 @@ def analyse(preddir,
             features.append(features_dict)
             prediction.append(predictions_dict)
             truth.append(truth_dict)
+            no_noise_indices = predictions_dict['no_noise_sel'] #Shape [N_filtered, 1]
             
             if eta_phi_mask:
                 shower_mask = truth_dict['truthHitAssignementIdx'] == 0 
@@ -126,7 +127,6 @@ def analyse(preddir,
                 delta_mask = delta_R < 0.5 # Shape [N_unfiltered, 1]
                 # feature_mask = delta_mask
                 # Noise mask is a tensor of indices
-                no_noise_indices = predictions_dict['no_noise_sel'] #Shape [N_filtered, 1]
                 zeros = tf.zeros_like(delta_mask[:,0], dtype=tf.bool)
                 ones = tf.ones_like(no_noise_indices[:,0], dtype=tf.bool)
                 noise_mask = tf.tensor_scatter_nd_update(zeros, no_noise_indices, ones)
@@ -140,12 +140,20 @@ def analyse(preddir,
                         'no_noise_sel']
                 for key in pred_keys:
                     predictions_dict[key] = predictions_dict[key][pred_mask]
+                pred_masks.append(pred_mask)
+            else:
+                zeros = tf.zeros_like(
+                        truth_dict['truthHitAssignedEta'][:,0],
+                        dtype=tf.bool)
+                ones = tf.ones_like(no_noise_indices[:,0], dtype=tf.bool)
+                noise_mask = tf.tensor_scatter_nd_update(zeros, no_noise_indices, ones)
+                mask = noise_mask
+
 
             print(f"Analyzing event {event_id}")
 
             noise_masks.append(no_noise_indices)
             masks.append(mask)
-            pred_masks.append(pred_mask)
             truth_df = ep.dictlist_to_dataframe([truth_dict], add_event_id=False)
             features_df = ep.dictlist_to_dataframe([features_dict], add_event_id=False)
             if includes_mask:

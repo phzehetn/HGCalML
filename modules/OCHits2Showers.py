@@ -175,7 +175,7 @@ class OCGatherEnergyCorrFac2(tf.keras.layers.Layer):
         shower_matrix = tf.cast(pred_sid_p1 == shower_ids, tf.float32) # [N_hit, N_shower+1]
         shower_e_hit_raw = e_hit * shower_matrix # [N_hit, N_shower+1]
         shower_e_track_raw = e_hit * shower_matrix # [N_hit, N_shower+1]
-        shower_beta = pred_beta * shower_matrix # [N_hit, N_shower+1] 
+        shower_beta = pred_beta * shower_matrix # [N_hit, N_shower+1]
         shower_beta_hit = tf.cast(np.logical_not(is_track), tf.float32) * shower_beta
         shower_beta_track = tf.cast(is_track, tf.float32) * shower_beta
         has_hit = tf.reduce_max(shower_beta_hit, axis=0) > 0.0  # [N_showers+1]
@@ -320,7 +320,7 @@ class OCGatherEnergyCorrFac2(tf.keras.layers.Layer):
 
 class OCGatherEnergyCorrFac_new(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
-        super(OCGatherEnergyCorrFac2, self).__init__(**kwargs)
+        super(OCGatherEnergyCorrFac_new, self).__init__(**kwargs)
 
     def call(self,
              pred_sid,
@@ -351,8 +351,14 @@ class OCGatherEnergyCorrFac_new(tf.keras.layers.Layer):
         is_track = tf.cast(is_track, tf.int32)
 
         pred_sid_p1 = pred_sid +1 # For the -1 label for noise
-        pred_corr_factor = tf.where(pred_sid==-1, tf.zeros_like(pred_corr_factor, tf.float32), pred_corr_factor)
-        rechit_energy = tf.where(pred_sid==-1, tf.zeros_like(rechit_energy, tf.float32), rechit_energy)
+        pred_corr_factor = tf.where(
+                pred_sid==-1,
+                tf.zeros_like(pred_corr_factor, tf.float32),
+                pred_corr_factor)
+        rechit_energy = tf.where(
+                pred_sid==-1,
+                tf.zeros_like(rechit_energy, tf.float32),
+                rechit_energy)
 
         e_hit = tf.where(is_track==0, rechit_energy, tf.zeros_like(rechit_energy))
         e_track = tf.where(is_track==1, rechit_energy, tf.zeros_like(rechit_energy))
@@ -364,13 +370,53 @@ class OCGatherEnergyCorrFac_new(tf.keras.layers.Layer):
         e_track_shower = tf.math.unsorted_segment_sum(
             e_track[:,0], pred_sid_p1[:,0], num_segments=(tf.reduce_max(pred_sid_p1)+1)
         )
-        correction_hits = pred_corr_factor[alpha_idx_hits]
-        correction_tracks = pred_corr_factor[alpha_idx_tracks]
+        zero_appendix = tf.constant([[0]], dtype=pred_corr_factor.dtype)
+        pred_corr_factor = tf.concat(
+                [pred_corr_factor, zero_appendix], axis=0)
+        alpha_idx_hits = tf.where(
+                tf.math.is_nan(tf.cast(alpha_idx_hits, dtype=tf.float32)),
+                -1.0,
+                alpha_idx_hits)
+        alpha_idx_tracks = tf.where(
+                tf.math.is_nan(tf.cast(alpha_idx_tracks, dtype=tf.float32)),
+                -1.0,
+                alpha_idx_tracks)
+        # TODO: The next line doesn't work, so we have to do another way to select the hits
+        # correction_hits = pred_corr_factor[tf.cast(alpha_idx_hits, dtype=tf.int32)]
+        correction_hits = tf.gather_nd(
+                pred_corr_factor,
+                tf.cast(alpha_idx_hits, tf.int32)[:,tf.newaxis])
+        correction_hits = tf.concat([ [[0.]], correction_hits], axis=0)
+        correction_tracks = tf.gather_nd(
+                pred_corr_factor,
+                tf.cast(alpha_idx_tracks, tf.int32)[:,tf.newaxis])
+        correction_tracks = tf.concat([ [[0.]], correction_tracks], axis=0)
+        # correction_tracks = pred_corr_factor[tf.cast(alpha_idx_tracks, dtype=tf.int32)]
         e_hit_shower_corrected = e_hit_shower * correction_hits
         e_track_shower_corrected = e_track_shower * correction_tracks
+        e_hit_corrected = tf.reshape(
+                tf.gather(e_hit_shower_corrected, pred_sid_p1[:,0]),
+                shape=(-1,1))
+        e_hit_raw = tf.reshape(
+                tf.gather(e_hit_shower, pred_sid_p1[:,0]),
+                shape=(-1,1))
+        e_track_corrected = tf.reshape(
+                tf.gather(e_track_shower_corrected, pred_sid_p1[:,0]),
+                shape=(-1,1))
+        e_track_raw = tf.reshape(
+                tf.gather(e_track_shower, pred_sid_p1[:,0]),
+                shape=(-1,1))
 
 
-        return e_hit_shower, e_track_shower, e_hit_shower_corrected, e_track_shower_corrected
+        data = {
+            'tracks_raw': e_track_raw,
+            'tracks_corrected': e_track_corrected,
+            'hits_raw': e_hit_raw,
+            'hits_corrected': e_hit_corrected,
+            }
+        # return data
+
+        return e_hit_raw, e_hit_corrected, e_track_raw, e_track_corrected
 
 
 
@@ -611,21 +657,28 @@ def OCHits2ShowersLayer_HDBSCAN(pred_ccoords, pred_beta, pred_dist, min_cluster_
     alpha_idx_hit = []
     for sid in np.unique(pred_sid):
         mask = pred_sid == sid
-        mask_track = tf.logical_and(mask, is_track)
-        mask_hit = tf.logical_and(mask, ~is_track)
+        mask_track = tf.logical_and(mask, is_track[:,0])
+        mask_hit = tf.logical_and(mask, ~is_track[:,0])
         if sid == -1:
             continue
         beta = pred_beta[mask]                              # shape (n_shower,)
         shower_indices = index[mask]                        # shape (n_shower,)
-        beta_hit = beta[mask_hit]
-        beta_track = beta[mask_track]
-        shower_indices_hit = shower_indices[mask_hit]
-        shower_indices_track = shower_indices[mask_track]
-        alpha_idx_hit.append(shower_indices_hit[np.argmax(beta_hit)])
-        alpha_idx_track.append(shower_indices_track[np.argmax(beta_track)])
+        beta_hit = pred_beta[mask_hit]
+        beta_track = pred_beta[mask_track]
+        shower_indices_hit = index[mask_hit]
+        shower_indices_track = index[mask_track]
+        if len(beta_hit) == 0:
+            alpha_idx_hit.append(np.nan)
+        else:
+            alpha_idx_hit.append(shower_indices_hit[np.argmax(beta_hit)])
+        if len(beta_track) == 0:
+            alpha_idx_track.append(np.nan)
+        else:
+            alpha_idx_track.append(shower_indices_track[np.argmax(beta_track)])
         alpha_idx.append(shower_indices[np.argmax(beta)])
 
     alpha_idx = np.array(alpha_idx)
+    alpha_idx = np.reshape(alpha_idx, newshape=(-1, 1))
     # turn pred_sid to int32
     pred_sid = pred_sid.astype(np.int32)
     if mask_radius is not None:
@@ -670,7 +723,8 @@ def process_endcap2(hits2showers_layer, energy_gather_layer, features_dict,
                 min_cluster_size=min_cluster_size,
                 min_samples=min_samples,
                 mask_center=mask_center,
-                mask_radius=mask_radius)
+                mask_radius=mask_radius,
+                is_track=is_track)
     if not isinstance(pred_sid, np.ndarray):
         pred_sid = pred_sid.numpy()
     if not isinstance(alpha_idx, np.ndarray):
