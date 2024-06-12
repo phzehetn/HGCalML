@@ -7,6 +7,10 @@ but the layers themselves to other files
 # Define custom layers here and add them to the global_layers_list dict (important!)
 global_layers_list = {}
 
+from GraphCondensationLayers import graph_condensation_layers
+
+global_layers_list.update(graph_condensation_layers)
+
 # keras hacks
 
 from tensorflow.keras.layers import LeakyReLU
@@ -51,6 +55,15 @@ global_layers_list['RaggedGlobalExchange']=RaggedGlobalExchange
 
 ##GravNet...
 
+from GravNetLayersRagged import RandomSampling
+global_layers_list['RandomSampling']=RandomSampling
+
+from GravNetLayersRagged import ShiftDistance
+global_layers_list['ShiftDistance']=ShiftDistance
+
+from GravNetLayersRagged import Abs
+global_layers_list['Abs']=Abs
+
 from GravNetLayersRagged import CastRowSplits
 global_layers_list['CastRowSplits']=CastRowSplits
 
@@ -60,8 +73,20 @@ global_layers_list['CreateMask']=CreateMask
 from GravNetLayersRagged import Where
 global_layers_list['Where']=Where
 
+from GravNetLayersRagged import MixWhere
+global_layers_list['MixWhere']=MixWhere
+
+from GravNetLayersRagged import ValAndSign
+global_layers_list['ValAndSign']=ValAndSign
+
+from GravNetLayersRagged import SplitOffTracks
+global_layers_list['SplitOffTracks']=SplitOffTracks
+
 from GravNetLayersRagged import MaskTracksAsNoise
 global_layers_list['MaskTracksAsNoise']=MaskTracksAsNoise
+
+from GravNetLayersRagged import ConcatRaggedTensors
+global_layers_list['ConcatRaggedTensors']=ConcatRaggedTensors
 
 from GravNetLayersRagged import CondensateToIdxs
 global_layers_list['CondensateToIdxs']=CondensateToIdxs
@@ -93,11 +118,29 @@ global_layers_list['PrintMeanAndStd']=PrintMeanAndStd
 from GravNetLayersRagged import ElementScaling
 global_layers_list['ElementScaling']=ElementScaling
 
+from GravNetLayersRagged import ConditionalNormalizationLayer
+global_layers_list['ConditionalNormalizationLayer']=ConditionalNormalizationLayer
+
+from GravNetLayersRagged import ConditionalBatchNorm
+global_layers_list['ConditionalBatchNorm']=ConditionalBatchNorm
+
+from GravNetLayersRagged import ConditionalBatchEmbedding
+global_layers_list['ConditionalBatchEmbedding']=ConditionalBatchEmbedding
+
 from GravNetLayersRagged import GooeyBatchNorm
 global_layers_list['GooeyBatchNorm']=GooeyBatchNorm
 
 from GravNetLayersRagged import ScaledGooeyBatchNorm
 global_layers_list['ScaledGooeyBatchNorm']=ScaledGooeyBatchNorm
+
+from GravNetLayersRagged import ScaledGooeyBatchNorm2
+global_layers_list['ScaledGooeyBatchNorm2']=ScaledGooeyBatchNorm2
+
+from GravNetLayersRagged import SignedScaledGooeyBatchNorm
+global_layers_list['SignedScaledGooeyBatchNorm']=SignedScaledGooeyBatchNorm
+
+from GravNetLayersRagged import ConditionalScaledGooeyBatchNorm
+global_layers_list['ConditionalScaledGooeyBatchNorm']=ConditionalScaledGooeyBatchNorm
 
 from GravNetLayersRagged import ProcessFeatures
 global_layers_list['ProcessFeatures']=ProcessFeatures
@@ -163,6 +206,9 @@ global_layers_list['NoiseFilter']=NoiseFilter
 from GravNetLayersRagged import EdgeCreator
 global_layers_list['EdgeCreator']=EdgeCreator
 
+from GravNetLayersRagged import EdgeContractAndMix
+global_layers_list['EdgeContractAndMix']=EdgeContractAndMix
+
 from GravNetLayersRagged import EdgeSelector
 global_layers_list['EdgeSelector']=EdgeSelector
 
@@ -184,6 +230,9 @@ global_layers_list['SoftPixelCNN']=SoftPixelCNN
 from GravNetLayersRagged import RaggedGravNet
 global_layers_list['RaggedGravNet']=RaggedGravNet
 
+from GravNetLayersRagged import SelfAttention
+global_layers_list['SelfAttention']=SelfAttention
+
 from GravNetLayersRagged import MultiAttentionGravNetAdd
 global_layers_list['MultiAttentionGravNetAdd']=MultiAttentionGravNetAdd
 
@@ -199,15 +248,44 @@ global_layers_list['MessagePassing']=MessagePassing
 from GravNetLayersRagged import DistanceWeightedMessagePassing
 global_layers_list['DistanceWeightedMessagePassing']=DistanceWeightedMessagePassing
 
+from GravNetLayersRagged import TranslationInvariantMP
+global_layers_list['TranslationInvariantMP']=TranslationInvariantMP
+
 from GravNetLayersRagged import ApproxPCA
 global_layers_list['ApproxPCA']=ApproxPCA
+
+from GravNetLayersRagged import DistanceWeightedAttentionMP
+global_layers_list['DistanceWeightedAttentionMP']=DistanceWeightedAttentionMP
+
+from GravNetLayersRagged import AttentionMP
+global_layers_list['AttentionMP']=AttentionMP
 
 from GravNetLayersRagged import EdgeConvStatic
 global_layers_list['EdgeConvStatic']=EdgeConvStatic
 
+from GravNetLayersRagged import XYZtoXYZPrime
+global_layers_list['XYZtoXYZPrime']=XYZtoXYZPrime
+
+from GravNetLayersRagged import SingleLocalGravNetAttention 
+global_layers_list['SingleLocalGravNetAttention']=SingleLocalGravNetAttention 
+
+from GravNetLayersRagged import LocalGravNetAttention 
+global_layers_list['LocalGravNetAttention']=LocalGravNetAttention
+
+
+from GravNetLayersRagged import FlatNeighbourFeatures 
+global_layers_list['FlatNeighbourFeatures']=FlatNeighbourFeatures
+
 ### odd debug layers
 from DebugLayers import PlotCoordinates
 global_layers_list['PlotCoordinates']=PlotCoordinates
+
+
+from DebugLayers import Plot2DCoordinatesPlusScore
+global_layers_list['Plot2DCoordinatesPlusScore']=Plot2DCoordinatesPlusScore
+
+from DebugLayers import PlotGraphCondensation
+global_layers_list['PlotGraphCondensation']=PlotGraphCondensation
 
 
 from DebugLayers import PlotEdgeDiscriminator
@@ -217,27 +295,47 @@ from DebugLayers import PlotNoiseDiscriminator
 global_layers_list['PlotNoiseDiscriminator']=PlotNoiseDiscriminator
 
 
+from DebugLayers import PlotGraphCondensationEfficiency
+global_layers_list['PlotGraphCondensationEfficiency']=PlotGraphCondensationEfficiency
 
-from LossLayers import LLNotNoiseClassifier,CreateTruthSpectatorWeights
+
+#ragged layers module
+from RaggedLayers import ragged_layers
+global_layers_list.update(ragged_layers)
+
+
+from LossLayers import LLValuePenalty,LLNotNoiseClassifier,CreateTruthSpectatorWeights, NormaliseTruthIdxs, LLGraphCondOCLoss
 from LossLayers import LLLocalClusterCoordinates, LLClusterCoordinates,LLFillSpace, LLOCThresholds
-from LossLayers import LossLayerBase, LLBasicObjectCondensation, LLFullObjectCondensation,LLNeighbourhoodClassifier
+from LossLayers import LossLayerBase, LLBasicObjectCondensation, LLFullObjectCondensation,LLPFCondensates,LLNeighbourhoodClassifier
+from LossLayers import LLFullObjectCondensationUncertainty, LLFullObjectCondensationID
+from LossLayers import LLExtendedObjectCondensation, LLExtendedObjectCondensation2
 from LossLayers import LLEdgeClassifier, AmbiguousTruthToNoiseSpectator, LLGoodNeighbourHood, LLKnnPushPullObjectCondensation
-from LossLayers import LLKnnSimpleObjectCondensation
+from LossLayers import LLEnergySums,LLKnnSimpleObjectCondensation, LLPushTracks, LLFullOCThresholds, LLLocalEnergyConservation
+from LossLayers import LLRegulariseGravNetSpace, LLSpectatorPenalty
 import traceback
 import os
-
+import itertools
 
 
 ##end debug
 
 
 global_layers_list['AmbiguousTruthToNoiseSpectator']=AmbiguousTruthToNoiseSpectator
+global_layers_list['NormaliseTruthIdxs']=NormaliseTruthIdxs
 
 global_layers_list['CreateTruthSpectatorWeights']=CreateTruthSpectatorWeights
 
 global_layers_list['LossLayerBase']=LossLayerBase
 global_layers_list['LLNotNoiseClassifier']=LLNotNoiseClassifier
+global_layers_list['LLValuePenalty']=LLValuePenalty
+
+global_layers_list['LLPushTracks']=LLPushTracks
+global_layers_list['LLEnergySums']=LLEnergySums
+
+
 global_layers_list['LLOCThresholds']=LLOCThresholds
+global_layers_list['LLLocalEnergyConservation']=LLLocalEnergyConservation
+global_layers_list['LLFullOCThresholds']=LLFullOCThresholds
 global_layers_list['LLFillSpace']=LLFillSpace
 global_layers_list['LLClusterCoordinates']=LLClusterCoordinates
 global_layers_list['LLLocalClusterCoordinates']=LLLocalClusterCoordinates
@@ -245,9 +343,17 @@ global_layers_list['LLKnnSimpleObjectCondensation']=LLKnnSimpleObjectCondensatio
 global_layers_list['LLKnnPushPullObjectCondensation']=LLKnnPushPullObjectCondensation
 global_layers_list['LLBasicObjectCondensation']=LLBasicObjectCondensation
 global_layers_list['LLFullObjectCondensation']=LLFullObjectCondensation
+global_layers_list['LLFullObjectCondensationUncertainty']=LLFullObjectCondensationUncertainty
+global_layers_list['LLExtendedObjectCondensation']=LLExtendedObjectCondensation
+global_layers_list['LLExtendedObjectCondensation2']=LLExtendedObjectCondensation2
+global_layers_list['LLFullObjectCondensationID']=LLFullObjectCondensationID
+global_layers_list['LLGraphCondOCLoss']=LLGraphCondOCLoss
+global_layers_list['LLPFCondensates']=LLPFCondensates
 global_layers_list['LLNeighbourhoodClassifier']=LLNeighbourhoodClassifier
 global_layers_list['LLEdgeClassifier']=LLEdgeClassifier
 global_layers_list['LLGoodNeighbourHood']=LLGoodNeighbourHood
+global_layers_list['LLRegulariseGravNetSpace']=LLRegulariseGravNetSpace
+global_layers_list['LLSpectatorPenalty']=LLSpectatorPenalty
 
 
 
@@ -275,6 +381,82 @@ import tensorflow.keras.backend as K
 import tensorflow as tf
 
 
+class GroupSortActivation(tf.keras.layers.Layer): 
+    
+    def compute_output_shape(self, input_shapes):
+        return input_shapes
+    
+    def call(self, inputs):
+        out = tf.sort(inputs, axis=-1)
+        return tf.reshape(out, tf.shape(inputs))
+        
+global_layers_list['GroupSortActivation']=GroupSortActivation
+
+
+def layernorm(x, return_norm=False):
+    x = x - tf.reduce_mean(x,axis=-1, keepdims=True)
+    norm = tf.reduce_sum(x**2, axis=-1,keepdims=True)
+    norm = tf.sqrt(norm+1e-6)
+    if return_norm:
+        x = tf.concat([x / norm * tf.sqrt(tf.cast(x.shape[-1],'float32')), norm], axis=-1)
+    else:
+        x = x / norm * tf.sqrt(tf.cast(x.shape[-1],'float32'))
+    return x
+
+global_layers_list['layernorm']= layernorm #convenience
+
+class SphereActivation(tf.keras.layers.Layer): 
+    '''
+    a layer norm that can also return the norm
+    '''
+    
+    def __init__(self,return_norm = False, **kwargs):
+        super(SphereActivation, self).__init__(**kwargs)
+        self.return_norm = return_norm
+        
+    def get_config(self):
+        config = {'return_norm': self.return_norm}
+        base_config = super(SphereActivation, self).get_config()
+        return dict(list(base_config.items()) + list(config.items() ))
+    
+    def call(self, x):
+        if not self.return_norm:
+            return layernorm(x, False)
+        else:
+            out = layernorm(x, True)
+            return out[...,:x.shape[-1]], out[...,x.shape[-1]:x.shape[-1]+1]
+        
+global_layers_list['SphereActivation']=SphereActivation
+
+class Multi(tf.keras.layers.Layer): 
+    
+    def call(self, inputs):
+        assert len(inputs)==2
+        x,y = inputs
+        return x*y #but with broadcasting
+    
+global_layers_list['Multi']=Multi
+
+class Sqrt(tf.keras.layers.Layer): 
+    
+    def compute_output_shape(self, input_shapes):
+        return input_shapes
+    
+    def call(self, x):
+        return tf.sqrt(x + 1e-6)
+        
+global_layers_list['Sqrt']=Sqrt
+
+class SplitFeatures(Layer):
+    def __init__(self,**kwargs):
+        super(SplitFeatures, self).__init__(**kwargs)
+        
+    def call(self, inputs):
+        n_f = inputs.shape[-1]
+        return [inputs[...,i:i+1] for i in range(n_f)]
+
+global_layers_list['SplitFeatures']=SplitFeatures
+
 class GausActivation(Layer):
     def __init__(self,**kwargs):
         super(GausActivation, self).__init__(**kwargs)
@@ -294,6 +476,17 @@ class OnesLike(Layer):
         return tf.ones_like(inputs)
     
 global_layers_list['OnesLike']=OnesLike
+
+
+class ZerosLike(Layer):
+    def __init__(self,**kwargs):
+        super(ZerosLike, self).__init__(**kwargs)
+    def compute_output_shape(self, input_shape):
+        return input_shape
+    def call(self, inputs):
+        return tf.zeros_like(inputs)
+    
+global_layers_list['ZerosLike']=ZerosLike
 
 class CheckNaN(Layer):
     def __init__(self,**kwargs):
@@ -762,7 +955,5 @@ class DictModel(tf.keras.Model):
         """
         
         super(DictModel, self).__init__(inputs,outputs=outputs, *args, **kwargs)
-
-    
 
 global_layers_list['DictModel']=DictModel

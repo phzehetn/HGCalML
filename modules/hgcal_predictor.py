@@ -1,21 +1,37 @@
-
+import os
+import time
+import pdb
+import gzip
+import pickle
+import numpy as np
 
 from DeepJetCore.DataCollection import DataCollection
 from DeepJetCore.dataPipeline import TrainDataGenerator
-from datastructures.TrainData_NanoML import TrainData_NanoML
-
-import os
 from DeepJetCore.modeltools import load_model
+
+from datastructures.TrainData_NanoML import TrainData_NanoML
+from datastructures.TrainData_PreselectionNanoML import TrainData_PreselectionNanoML
 from datastructures import TrainData_TrackML
-import time
+from LossLayers import LossLayerBase
+
 
 class HGCalPredictor():
-    def __init__(self, input_source_files_list, training_data_collection, predict_dir, unbuffered=False, model_path=None, max_files=4, inputdir=None):
+    def __init__(self,
+            input_source_files_list,
+            training_data_collection,
+            predict_dir,
+            unbuffered=False,
+            model_path=None,
+            max_files=4,
+            inputdir=None,
+            toydata=False
+            ):
         self.input_data_files = []
         self.inputdir = None
         self.predict_dir = predict_dir
         self.unbuffered=unbuffered
         self.max_files = max_files
+        self.toydata = toydata
         print("Using HGCal predictor class")
 
         ## prepare input lists for different file formats
@@ -43,6 +59,7 @@ class HGCalPredictor():
             self.dc = DataCollection(input_source_files_list)
         else:
             self.dc = DataCollection(training_data_collection)
+        print("Data class: ", type(self.dc.dataclass()))
 
         if inputdir is not None:
             self.inputdir = inputdir
@@ -50,9 +67,9 @@ class HGCalPredictor():
         self.model_path = model_path
         if max_files > 0:
             self.input_data_files = self.input_data_files[0:min(max_files, len(self.input_data_files))]
-        
 
-    def predict(self, model=None, model_path=None, output_to_file=True):
+
+    def predict(self, model=None, model_path=None, output_to_file=True, max_steps=-1):
         if model_path==None:
             model_path = self.model_path
 
@@ -69,14 +86,22 @@ class HGCalPredictor():
         if model is None:
             model = load_model(model_path)
 
+        for l in model.layers:
+            if isinstance(l, LossLayerBase):
+                print('deactivating layer',l)
+                l.active=False
+
         all_data = []
+        predict_time = 0.
+        all_times = []
+        counter = 0
         for inputfile in self.input_data_files:
 
             use_inputdir = self.inputdir
             if inputfile[0] == "/":
                 use_inputdir = ""
             outfilename = "pred_" + os.path.basename(inputfile)
-            
+
             print('predicting ', use_inputdir +'/' + inputfile)
 
             td = self.dc.dataclass()
@@ -109,26 +134,71 @@ class HGCalPredictor():
             generator = gen.feedNumpyData()
 
             dumping_data = []
+            extra_data = [] # Only used for toy data test sets
 
             thistime = time.time()
-            for _ in range(num_steps):
+            for step in range(num_steps):
+                if max_steps > 0 and step > max_steps:
+                    break
+
                 data_in = next(generator)
-                predictions_dict = model(data_in[0])
+                if self.toydata:
+                    # The toy data set has a different input shape
+                    # this is only true for the testing part of the
+                    # toy data set. If predicting the training set
+                    # initialize the hgcal_predictor toydata set to False
+                    # The last four entries contain PU and PID
+                    # we store them separately
+                    t0 = time.time()
+                    predictions_dict = model(data_in[0][:-4])
+                    pred_time = time.time() - t0
+                    predict_time += pred_time
+                    counter += 1
+                    truth_info = data_in[0][-4:]
+                    extra_data.append([truth_info])
+                else:
+                    t0 = time.time()
+                    if len(data_in[0]) == 24:
+                        data = data_in[0][:20]
+                    else:
+                        data = data_in[0]
+                    predictions_dict = model(data)
+                    pred_time = time.time() - t0
+                    predict_time += pred_time
+                    n_pred = predictions_dict['pred_beta'].shape[0]
+                    counter += 1
                 for k in predictions_dict.keys():
-                    predictions_dict[k] = predictions_dict[k].numpy()
-                features_dict = td.createFeatureDict(data_in[0])
+                    # predictions_dict[k] = predictions_dict[k].numpy()
+                    predictions_dict[k] = np.array(predictions_dict[k])
+
+                features_dict = None
+                truth_dict = None
+                try:
+                    features_dict = td.createFeatureDict(data_in[0])
+                    n_inputs = features_dict['recHitX'].shape[0]
+                    all_times.append((n_inputs, n_pred, pred_time))
+                except:
+                    print("features_dict not created")
+
                 truth_dict = td.createTruthDict(data_in[0])
-                
+
                 dumping_data.append([features_dict, truth_dict, predictions_dict])
-                
+
             totaltime = time.time() - thistime
             print('took approx',totaltime/num_steps,'s per endcap (also includes dict building)')
+            print("prediction time: ", predict_time, " n_events: ", counter)
 
             td.clear()
             gen.clear()
             outfilename = os.path.splitext(outfilename)[0] + '.bin.gz'
+            extrafile = os.path.splitext(outfilename)[0] + '_extra_' + '.pkl'
             if output_to_file:
                 td.writeOutPredictionDict(dumping_data, self.predict_dir + "/" + outfilename)
+                with open(os.path.join(self.predict_dir, 'time_statistics.pkl'), 'wb') as f:
+                    pickle.dump(all_times, f)
+                if self.toydata:
+                    with open(os.path.join(self.predict_dir, extrafile), 'wb') as f:
+                        pickle.dump(extra_data, f)
             outputs.append(outfilename)
             if not output_to_file:
                 all_data.append(dumping_data)

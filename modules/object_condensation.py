@@ -66,16 +66,17 @@ def mean_N_K(x, N, K):
 
 class Basic_OC_per_sample(object):
     def __init__(self, 
-                 
                  q_min,
                  s_b,
                  use_mean_x,
-                 spect_supp=None #None means same as noise
+                 spect_supp=None, #None means same as noise
+                 global_weight=False
                  ):
         
         self.q_min = q_min
         self.s_b = s_b
         self.use_mean_x = use_mean_x
+        self.global_weight = global_weight
         if spect_supp is None:
             spect_supp = s_b
         self.spect_supp = spect_supp
@@ -105,7 +106,8 @@ class Basic_OC_per_sample(object):
                          truth_idx,
                          object_weight,
                          is_spectator_weight,
-                         
+                         calc_Ms=True,
+                         noise_qmin : float =1.
                          ):
         self.valid=True
         #used for pll and q
@@ -123,11 +125,17 @@ class Basic_OC_per_sample(object):
         
         #spectators do not participate in the potential losses
         self.q_v = (self.tanhsqbeta + self.q_min)*tf.clip_by_value(1.-is_spectator_weight, 0., 1.)
+
+        self.q_v = tf.where(truth_idx < 0, noise_qmin, self.q_v) # set noise qmin
         
-        self.create_Ms(truth_idx)
+        if calc_Ms:
+            self.create_Ms(truth_idx)
         if self.Msel is None:
             self.valid=False
             return
+        #if self.Msel.shape[0] < 2:#less than two objects - can be dangerous
+        #    self.valid=False
+        #    return
         
         self.mask_k_m = SelectWithDefault(self.Msel, tf.zeros_like(beta)+1., 0.) #K x V-obj x 1
         self.beta_k_m = SelectWithDefault(self.Msel, self.beta_v, 0.) #K x V-obj x 1
@@ -156,21 +164,18 @@ class Basic_OC_per_sample(object):
     def V_att_k(self):
         '''
         '''
-        x_k_e = tf.expand_dims(self.x_k,axis=1)
-        d_k_e = tf.expand_dims(self.d_k,axis=1)
-        
+        K = tf.reduce_sum(tf.ones_like(self.q_k))
         N_k =  tf.reduce_sum(self.mask_k_m, axis=1)
-        
-        dsq_k_m = tf.reduce_sum((self.x_k_m - x_k_e)**2, axis=-1, keepdims=True) #K x V-obj x 1
-        
-        sigma = 0.95 * d_k_e**2 + 0.05 * self.d_k_m**2 #create gradients for all
-        
+        dsq_k_m = self.calc_dsq_att() #K x V-obj x 1
+        sigma = self.weighted_d_k_m(dsq_k_m) #create gradients for all
         dsq_k_m = tf.math.divide_no_nan(dsq_k_m, sigma + 1e-4)
-            
         V_att = self.att_func(dsq_k_m) * self.q_k_m * self.mask_k_m  #K x V-obj x 1
-    
         V_att = self.q_k * tf.reduce_sum( V_att ,axis=1)  #K x 1
-        V_att = tf.math.divide_no_nan(V_att, N_k+1e-3)  #K x 1
+        if self.global_weight:
+            N_full = tf.reduce_sum(tf.ones_like(self.beta_v))
+            V_att = K * tf.math.divide_no_nan(V_att, N_full+1e-3)  #K x 1
+        else:
+            V_att = tf.math.divide_no_nan(V_att, N_k+1e-3)  #K x 1
         
         #print(tf.reduce_mean(self.d_v),tf.reduce_max(self.d_v))
         
@@ -178,29 +183,47 @@ class Basic_OC_per_sample(object):
     
     def rep_func(self,dsq_k_v):
         return tf.math.exp(-dsq_k_v/2.)
+    
+    def weighted_d_k_m(self, dsq): # dsq K x V x 1
+        return tf.expand_dims(self.d_k, axis=1) # K x 1 x 1
+    
+    def calc_dsq_att(self):
+        x_k_e = tf.expand_dims(self.x_k,axis=1)
+        dsq_k_m = tf.reduce_sum((self.x_k_m - x_k_e)**2, axis=-1, keepdims=True) #K x V-obj x 1
+        return dsq_k_m
+    
+    def calc_dsq_rep(self):
+        dsq = tf.expand_dims(self.x_k, axis=1) - tf.expand_dims(self.x_v, axis=0) #K x V x C
+        dsq = tf.reduce_sum(dsq**2, axis=-1, keepdims=True)  #K x V x 1
+        return dsq
         
     def V_rep_k(self):
         
-        d_k_e = tf.expand_dims(self.d_k, axis=1) # K x 1 x 1
-        d_v_e = tf.expand_dims(self.d_v, axis=0) # K x V x 1
         
-        N_k = tf.reduce_sum(self.Mnot, axis=1)
+        K = tf.reduce_sum(tf.ones_like(self.q_k))
+        N_notk = tf.reduce_sum(self.Mnot, axis=1)
         #future remark: if this gets too large, one could use a kNN here
         
-        dsq = tf.expand_dims(self.x_k, axis=1) - tf.expand_dims(self.x_v, axis=0) #K x V x C
-        dsq = tf.reduce_sum(dsq**2, axis=-1, keepdims=True)  #K x V x 1
+        dsq = self.calc_dsq_rep()
         
-        sigma = 0.95 * d_k_e**2 + 0.05 * d_v_e**2 #create gradients for all, but prefer k vertex
+        # nogradbeta = tf.stop_gradient(self.beta_k_m)
+        #weight. tf.reduce_sum( tf.exp(-dsq) * d_v_e, , axis=1) / tf.reduce_sum( tf.exp(-dsq) )
+        sigma = self.weighted_d_k_m(dsq) #create gradients for all, but prefer k vertex
         
         dsq = tf.math.divide_no_nan(dsq, sigma + 1e-4) #K x V x 1
-        
+
         V_rep = self.rep_func(dsq) * self.Mnot * tf.expand_dims(self.q_v,axis=0)  #K x V x 1
-        
+
         V_rep = self.q_k * tf.reduce_sum(V_rep, axis=1) #K x 1
-        V_rep = tf.math.divide_no_nan(V_rep, N_k+1e-3)  #K x 1
-        
+        if self.global_weight:
+            N_full = tf.reduce_sum(tf.ones_like(self.beta_v))
+            V_rep = K * tf.math.divide_no_nan(V_rep, N_full+1e-3)  #K x 1
+        else:
+            V_rep = tf.math.divide_no_nan(V_rep, N_notk+1e-3)  #K x 1
+
         return V_rep
-    
+
+
     def Pll_k(self):
         
         tanhsqbeta = self.beta_v**2 #softer here
@@ -222,10 +245,10 @@ class Basic_OC_per_sample(object):
         #use continuous max approximation through LSE
         eps = 1e-3
         beta_pen = 1. - eps * tf.reduce_logsumexp(self.beta_k_m/eps, axis=1)#sum over m
+        #for faster convergence  
+        beta_pen += 1. - tf.clip_by_value(tf.reduce_sum(self.beta_k_m, axis=1), 0., 1)
         beta_pen = tf.debugging.check_numerics(beta_pen, "OC: beta pen")
         return beta_pen
-        #trivial but to keep the structure
-        return (1. - self.beta_k)
         
     def Noise_pen(self):
         
@@ -259,10 +282,10 @@ class Basic_OC_per_sample(object):
                      high_B_pen
                      ):
         
-        zero_tensor = tf.reduce_mean(self.q_v,axis=0)*0.
+        zero_tensor = tf.zeros_like(tf.reduce_mean(self.q_v,axis=0))
         
         if not self.valid: # no objects
-            zero_payload = tf.reduce_mean(self.pll_v,axis=0)*0.
+            zero_payload = tf.zeros_like(tf.reduce_mean(self.pll_v,axis=0))
             print('WARNING: no objects in sample, continue to next')
             return zero_tensor, zero_tensor, zero_tensor, zero_tensor, zero_payload, zero_tensor
     
@@ -282,45 +305,212 @@ class Basic_OC_per_sample(object):
         high_B_pen += tf.reduce_sum(self.ow_k *self.high_B_pen_k())/K
         
         return V_att, V_rep, Noise_pen, B_pen, pll, high_B_pen
-        
-        
 
+
+    def calc_metrics(self, energies):
+        return self._calc_containment(energies), self._calc_contamination(energies)
+    # metrics functions that can be called at the end, first calc containment, then contamination
+    def _calc_containment(self, energies):
+        '''
+        energies as  V x 1
+        '''
+         
+        x_k_alpha = tf.gather_nd(self.x_k_m,self.alpha_k, batch_dims=1) # K x C
+        #get mean minimum distance
+        d_x_k = (tf.expand_dims(x_k_alpha, axis=0) - tf.expand_dims(x_k_alpha, axis=1))**2  # K x K x C
+        d_x_k = tf.reduce_sum(d_x_k, axis=2) + 10000. * tf.eye(d_x_k.shape[0],d_x_k.shape[1])  # K x K , add large identity
+        d_m_x_k = tf.reduce_min(d_x_k, axis=1, keepdims=True)# K x 1
+        d_m_x_k = tf.sqrt(d_m_x_k)/self.d_k 
+        self.rel_metrics_radius = tf.reduce_mean(d_m_x_k) / 2. # ()
+
+        ##now metrics
+        dxk = tf.reduce_sum( (tf.expand_dims(x_k_alpha, axis=1) - self.x_k_m)**2 , axis= -1) #K x V'
+        
+        in_radius = self.rel_metrics_radius > tf.sqrt(dxk)/self.d_k #K x V'
+        in_radius = in_radius[...,tf.newaxis]
+
+        energies_k_m = SelectWithDefault(self.Msel, energies, 0.) #K x V' x 1
+        self.energies_k  = tf.reduce_sum(energies_k_m, axis=1) #K x 1
+        
+        in_radius_energy = tf.reduce_sum(tf.where( in_radius, energies_k_m, 0. ), axis=1) # K x 1
+        in_radius_energy /= self.energies_k
+        return tf.reduce_mean(in_radius_energy)
+
+    def _calc_contamination(self, energies):
+
+        x_k_alpha = tf.gather_nd(self.x_k_m,self.alpha_k, batch_dims=1) 
+        dsq = tf.expand_dims(x_k_alpha, axis=1) - tf.expand_dims(self.x_v, axis=0) #K x V x C
+        dsq = tf.reduce_sum(dsq**2, axis=-1)  #K x V 
+        in_radius = self.rel_metrics_radius > tf.sqrt(dsq) / self.d_k# K x V
+        
+        energies_k_v = tf.expand_dims(energies, axis=0) # K x V x 1
+        energies_ir_all_k_v = tf.where(in_radius[...,tf.newaxis], energies_k_v , 0.)
+        energies_ir_not_k_v = tf.where(in_radius[...,tf.newaxis], self.Mnot * energies_k_v , 0.)
+        
+        rel_cont = tf.reduce_sum(energies_ir_not_k_v, axis=1)/tf.reduce_sum(energies_ir_all_k_v, axis=1)
+        return tf.reduce_mean(rel_cont)
+    
+
+class Hinge_OC_per_sample_damped(Basic_OC_per_sample):
+    '''
+    This is the classic repulsive hinge loss
+    '''
+    def __init__(self, **kwargs):
+        self.condensation_damping = 1.0 # Fuly stop gradients for condensation points by default
+        super(Hinge_OC_per_sample_damped, self).__init__(**kwargs)
+
+
+    def calc_dsq_att(self):
+        x_k_e = tf.expand_dims(self.x_k,axis=1)
+        x_k_e = self.condensation_damping * tf.stop_gradient(x_k_e) + (1. - self.condensation_damping)*x_k_e
+        dsq_k_m = tf.reduce_sum((self.x_k_m - x_k_e)**2, axis=-1, keepdims=True) #K x V-obj x 1
+        return dsq_k_m
+
+        
+    def rep_func(self,dsq_k_v):
+        return tf.nn.relu(1. - tf.sqrt(dsq_k_v + 1e-6))
+    
+        
+class Hinge_OC_per_sample(Hinge_OC_per_sample_damped):
+    '''
+    This is the classic repulsive hinge loss
+    '''
+    def __init__(self, **kwargs):
+        super(Hinge_OC_per_sample, self).__init__(**kwargs)
+        self.condensation_damping = 0.0 # Don't stop any gradients
+
+        
+class Hinge_OC_per_sample_learnable_qmin(Hinge_OC_per_sample):
+    '''
+    This is the classic repulsive hinge loss
+    '''
+    def __init__(self, **kwargs):
+        super(Hinge_OC_per_sample_learnable_qmin, self).__init__(**kwargs)
+
+
+    def set_input(self,
+                         beta,
+                         x,
+                         d,
+                         pll,
+                         truth_idx,
+                         object_weight,
+                         is_spectator_weight,
+                         calc_Ms=True,
+                         ):
+        self.valid=True
+        #used for pll and q
+        self.tanhsqbeta = tf.math.atanh(beta/(1.01))**2
+
+        self.beta_v = tf.debugging.check_numerics(beta,"OC: beta input")
+        self.d_v = tf.debugging.check_numerics(d,"OC: d input")
+        self.x_v = tf.debugging.check_numerics(x,"OC: x input")
+        self.pll_v = tf.debugging.check_numerics(pll,"OC: pll input")
+        self.sw_v = tf.debugging.check_numerics(is_spectator_weight,"OC: is_spectator_weight input")
+
+        object_weight = tf.debugging.check_numerics(object_weight,"OC: object_weight input")
+
+        self.isn_v = tf.where(truth_idx<0, tf.zeros_like(truth_idx,dtype='float32')+1., 0.)
+
+        # ONLY DIFFERENCE TO BASE CLASS
+        # Spectator modify qmin
+        # ORIG:
+        # self.q_v = (self.tanhsqbeta + self.q_min)*tf.clip_by_value(1.-is_spectator_weight, 0., 1.)
+        self.q_min_vec = self.q_min * (tf.zeros_like(truth_idx, dtype=tf.float32) + 1.0) * tf.clip_by_value(1.-is_spectator_weight, 0., 1.)
+        self.q_v = self.tanhsqbeta + self.q_min_vec
+
+        if calc_Ms:
+            self.create_Ms(truth_idx)
+        if self.Msel is None:
+            self.valid=False
+            return
+        #if self.Msel.shape[0] < 2:#less than two objects - can be dangerous
+        #    self.valid=False
+        #    return
+
+        self.mask_k_m = SelectWithDefault(self.Msel, tf.zeros_like(beta)+1., 0.) #K x V-obj x 1
+        self.beta_k_m = SelectWithDefault(self.Msel, self.beta_v, 0.) #K x V-obj x 1
+        self.x_k_m = SelectWithDefault(self.Msel, self.x_v, 0.) #K x V-obj x C
+        self.q_k_m = SelectWithDefault(self.Msel, self.q_v, 0.)#K x V-obj x 1
+        self.d_k_m = SelectWithDefault(self.Msel, self.d_v, 0.)
+
+        self.alpha_k = tf.argmax(self.q_k_m, axis=1)# high beta and not spectator -> large q
+
+        self.beta_k = tf.gather_nd(self.beta_k_m, self.alpha_k, batch_dims=1) # K x 1
+        self.x_k = self._create_x_alpha_k() #K x C
+        self.q_k = tf.gather_nd(self.q_k_m, self.alpha_k, batch_dims=1) # K x 1
+        self.d_k = tf.gather_nd(self.d_k_m, self.alpha_k, batch_dims=1) # K x 1
+
+        #just a temp
+        ow_k_m = SelectWithDefault(self.Msel, object_weight, 0.)
+        self.ow_k = tf.gather_nd(ow_k_m, self.alpha_k, batch_dims=1) # K x 1
+
+
+class Hinge_OC_per_sample_learnable_qmin_betascale_position(Hinge_OC_per_sample_learnable_qmin):
+    """
+    Same as base class, but the average position is scaled with beta^2 instead of q
+    """
+
+    def _create_x_alpha_k(self): 
+        x_kalpha_m = tf.gather_nd(self.x_k_m,self.alpha_k, batch_dims=1) # K x C
+        if self.use_mean_x>0:
+            w_k_m = self.beta_k_m**2 * self.mask_k_m
+            x_kalpha_m_m = tf.reduce_sum(w_k_m * self.x_k_m,axis=1) # K x C
+            x_kalpha_m_m = tf.math.divide_no_nan(x_kalpha_m_m, tf.reduce_sum(w_k_m, axis=1)+1e-4)
+            x_kalpha_m = self.use_mean_x * x_kalpha_m_m + (1. - self.use_mean_x)*x_kalpha_m
+        
+        return x_kalpha_m 
+    
+
+
+class Hinge_Manhatten_OC_per_sample(Hinge_OC_per_sample):   
+
+    def calc_dsq_att(self):
+        x_k_e = tf.expand_dims(self.x_k,axis=1)
+        dsq_k_m = tf.reduce_sum(tf.abs(self.x_k_m - x_k_e), axis=-1, keepdims=True) #K x V-obj x 1
+        return dsq_k_m**2 #still square it since that's what the function should return
+
+    def calc_dsq_rep(self):
+        dsq = tf.expand_dims(self.x_k, axis=1) - tf.expand_dims(self.x_v, axis=0) #K x V x C
+        dsq = tf.reduce_sum(tf.abs(dsq), axis=-1, keepdims=True)  #K x V x 1
+        return dsq**2 #still square it since that's what the function should return
 
 class PushPull_OC_per_sample(Basic_OC_per_sample):
-    
+
     def __init__(self, **kwargs):
         super(PushPull_OC_per_sample, self).__init__(**kwargs)
-        
+
     def V_att_k(self):
-         
+
         x_k_e = tf.expand_dims(self.x_k,axis=1)
         d_k_e = tf.expand_dims(self.d_k,axis=1)
-        
+
         N_k =  tf.reduce_sum(self.mask_k_m, axis=1)
-        
+
         dsq_k_m = tf.reduce_sum((self.x_k_m - x_k_e)**2, axis=-1, keepdims=True) #K x V-obj x 1
-        
+
         sigma = 0.95 * d_k_e**2 + 0.05 * self.d_k_m**2 #create gradients for all
-        
+
         dsq_k_m = tf.math.divide_no_nan(dsq_k_m, sigma + 1e-4)
-            
+
         # attractive here scales with beta *not* with q!! (otherwise same)
         V_att = self.att_func(dsq_k_m) * (self.beta_k_m + self.q_min/10.) * self.mask_k_m  #K x V-obj x 1
-    
+
         # attractive here scales with beta *not* with q!! (otherwise same)
         V_att = (self.beta_k + self.q_min/10.) * tf.reduce_sum( V_att ,axis=1)  #K x 1
         V_att = tf.math.divide_no_nan(V_att, N_k+1e-3)  #K x 1
-        
+
         #print(tf.reduce_mean(self.d_v),tf.reduce_max(self.d_v))
-        
+
         return V_att
-        
+
     def att_func(self,dsq_k_m):
         return tf.where(dsq_k_m==0, 0., - self.rep_func(dsq_k_m/0.5**2)) #create a probability well
-    
+
     def Beta_pen_k(self):
         return 0.*(1. - self.beta_k) #always zero
-    
+
+
 class PreCond_OC_per_sample(Basic_OC_per_sample):
     
     def __init__(self, 
@@ -393,6 +583,35 @@ class PreCond_kNNOC_per_sample(PreCond_OC_per_sample):
         V_rep = tf.math.divide_no_nan(V_rep, N_k+1e-3)  #K x 1
         
         return V_rep
+    
+class GraphCond_OC_per_sample(Basic_OC_per_sample):
+    
+    def set_input(self, beta,
+                  x,
+                         d,
+                         pll,
+                         truth_idx,
+                         *args,**kwargs
+                         ):
+        
+        #replace beta with per-object normalised value
+        self.create_Ms(truth_idx)
+        beta_max = tf.reduce_max(self.Mnot * tf.expand_dims(beta,axis=0),axis=1, keepdims=True)  #K x 1 x 1
+        beta_max *= self.Mnot  #K x V x 1
+        
+        # this is the same reduced in K given the others are zero with exception of noise (filtered later)
+        beta_max = tf.reduce_max(beta_max, axis=0) # V x 1 
+        beta_normed = tf.math.divide_no_nan(beta, beta_max) # V x 1 
+        beta = tf.where(truth_idx<0, beta, beta_normed) #only for not noise
+        
+        super(GraphCond_OC_per_sample, self).set_input(beta, x, d, pll, truth_idx, *args,**kwargs, calc_Ms=False)
+    
+    def Beta_pen_k(self):
+        #simple mean beta per object
+        pen = tf.math.divide_no_nan(tf.reduce_sum(self.mask_k_m * self.beta_k_m, axis=1), 
+                                     tf.reduce_sum(self.mask_k_m, axis=1) + 1e-3)
+        return tf.debugging.check_numerics(pen,"GCOC: beta penalty")
+    
 
 class OC_loss(object):
     def __init__(self, 
@@ -410,7 +629,8 @@ class OC_loss(object):
                          object_weight,
                          is_spectator_weight,
                          
-                         rs): #rs last
+                         rs,
+                         energies = None): #rs last
         
         tot_V_att, tot_V_rep, tot_Noise_pen, tot_B_pen, tot_pll,tot_too_much_B_pen = 6*[tf.constant(0., tf.float32)]
         #batch loop
@@ -418,6 +638,8 @@ class OC_loss(object):
         if rs.shape[0] is None or rs.shape[0] < 2:
             return tot_V_att, tot_V_rep, tot_Noise_pen, tot_B_pen, tot_pll,tot_too_much_B_pen
         batch_size = rs.shape[0] - 1
+
+        contai,contam = tf.constant(0,dtype='float32'),tf.constant(0,dtype='float32')
     
         for b in tf.range(batch_size):
             
@@ -434,11 +656,16 @@ class OC_loss(object):
             tot_V_att, tot_V_rep, tot_Noise_pen, tot_B_pen, tot_pll,tot_too_much_B_pen = self.loss_impl.add_to_terms(
                 tot_V_att, tot_V_rep, tot_Noise_pen, tot_B_pen, tot_pll,tot_too_much_B_pen
                 )
-            
+            if energies is not None: #just last batch is fine
+                ca,cm = self.loss_impl.calc_metrics(energies[rs[b]:rs[b + 1]])
+                contai += ca / float(batch_size)
+                contam += cm / float(batch_size)
+
         bs = tf.cast(batch_size, dtype='float32') + 1e-3
         out = [a/bs for a in [tot_V_att, tot_V_rep, tot_Noise_pen, tot_B_pen, tot_pll,tot_too_much_B_pen]]
-        
-        return out
+        if energies is not None:
+            return out + [contai, contam]
+        return out, None, None
 
 
 #################################################
