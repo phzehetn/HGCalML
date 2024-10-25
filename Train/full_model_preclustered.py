@@ -17,7 +17,6 @@ from tensorflow.keras.layers import BatchNormalization
 
 import training_base_hgcal
 from datastructures import TrainData_PreSnowflakeNanoML
-from Layers import ScaledGooeyBatchNorm2
 from Layers import ProcessFeatures
 from Layers import PlotCoordinates, ZerosLike
 from Layers import LLExtendedObjectCondensation5
@@ -322,9 +321,6 @@ train.trainModel(
 def fix_batchnorm(m):
     for layer in m.layers:
         if isinstance(layer, BatchNormalization):
-            layer.trainable = False
-        if isinstance(layer, ScaledGooeyBatchNorm2):
-            # TODO: ScaledGooeyBatchNorm2 can likely be removed
             layer.trainable = False
 
 

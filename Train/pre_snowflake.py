@@ -15,7 +15,6 @@ from tensorflow.keras import Model
 from tensorflow.keras.layers import BatchNormalization
 
 import training_base_hgcal
-from Layers import ScaledGooeyBatchNorm2
 from Layers import ProcessFeatures
 from Layers import PlotCoordinates
 from Layers import LLExtendedObjectCondensation5
@@ -260,8 +259,6 @@ train.trainModel(
 def fix_batchnorm(m):
     for layer in m.layers:
         if isinstance(layer, BatchNormalization):
-            layer.trainable = False
-        if isinstance(layer, ScaledGooeyBatchNorm2):
             layer.trainable = False
 
 
