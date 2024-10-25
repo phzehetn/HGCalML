@@ -114,10 +114,12 @@ class TrainData_PreSnowflakeNanoML(TrainData):
     model_keys = None
 
     def set_model(self):
+        self.path_to_pretrained = os.path.join(os.getenv("HGCALML"), "models/pre_snowflake/pre_snowflake.h5")
         # self.path_to_pretrained = os.getenv("HGCALML")+'/models/double_tree_condensation_block/KERAS_check_model_last.h5'
         # self.path_to_pretrained = os.getenv("HGCALML")+'/models/pre-cluster_tmp/KERAS_check_model_last.h5'
-        self.path_to_pretrained = "/mnt/home/jkieseler/trainout/May24/dps_Aug24/KERAS_check_model_last.h5"
-        self.path_to_pretrained = "/mnt/home/pzehetner/Paper/Models/precluster_new2/KERAS_check_model_block_0_epoch_01.h5"
+        # self.path_to_pretrained = "/mnt/home/jkieseler/trainout/May24/dps_Aug24/KERAS_check_model_last.h5"
+        # self.path_to_pretrained = "/mnt/home/pzehetner/Paper/Models/precluster_new2/KERAS_check_model_block_0_epoch_01.h5"
+        # self.path_to_pretrained = "/mnt/home/pzehetner/CLEANUP/pre-model/KERAS_check_model_block_0_epoch_01.h5"
 
     def __init__(self):
         TrainData.__init__(self)
