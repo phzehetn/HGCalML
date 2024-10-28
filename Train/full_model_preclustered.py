@@ -141,7 +141,6 @@ def config_model(
     energy = pre_processed["rechit_energy"]
     t_idx = pre_processed["t_idx"]
     is_track = pre_processed["is_track"]
-    print(is_track)
 
     ###########################################################################
     ### Model definition ######################################################
