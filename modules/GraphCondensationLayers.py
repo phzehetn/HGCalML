@@ -5,9 +5,9 @@ from accknn_op import AccumulateLinKnn as acc_knn
 from push_knn_op import PushKnn as push_sum
 from oc_helper_ops import SelectWithDefault as select
 from oc_helper_ops import CreateMidx as oc_indices
-
-
+from GravNetLayersRagged import SortAndSelectNeighbours
 from LossLayers import LossLayerBase, smooth_max
+from MetricsLayers import MLReductionMetrics
 
 graph_condensation_layers = {}
 
@@ -32,7 +32,7 @@ class RestrictedDict(dict):
             self[k] = None
 
     def __setitem__(self, key, value):
-        if not key in self.allowed_keys:
+        if key not in self.allowed_keys:
             raise ValueError(
                 "only the following keys are allowed: " + str(self.allowed_keys)
             )
@@ -68,9 +68,6 @@ class GraphCondensation(RestrictedDict):
 
     def K(self):
         return self["nidx_down"].shape[1]
-
-
-from GravNetLayersRagged import SortAndSelectNeighbours
 
 
 class CreateGraphCondensation(tf.keras.layers.Layer):
@@ -291,54 +288,6 @@ class CreateGraphCondensation(tf.keras.layers.Layer):
 
 
 graph_condensation_layers["CreateGraphCondensation"] = CreateGraphCondensation
-
-
-class CreateGatherIndices(tf.keras.layers.Layer):
-    def __init__(self, **kwargs):
-        """
-        This layer creates indices that can be used to relate back the condensed
-        points to the full dimensionality. This uses a maximum-fraction relation.
-        If previous indices are provided, this operation can be chained
-
-        Inputs:
-        - graph transition
-        - previous indices (opt.)
-
-        Outputs:
-        - indices that describe the relation to the 'upper' level. such that gather(feat, idxs) repeats features
-
-        """
-        super(CreateGatherIndices, self).__init__(**kwargs)
-
-    def call(self, transition: GraphCondensation, idxs=None):
-        """
-        we have:
-        - nidx, weight:
-            low -> high (use argmax weight ('down') from transition and relate back to reduced set ('up'))
-            low -> None. (=-1); just keep empty
-        """
-
-        if idxs is None:
-            idxs = tf.range(transition["rs_up"][-1])
-        else:
-            tf.assert_equal(idxs.shape[0], transition["rs_up"][-1])  # sanity check
-
-        i_maxw = tf.argmax(transition["weights_down"], axis=1)
-        print("i_maxw", i_maxw, i_maxw.shape)
-        i_maxidx = tf.gather_nd(transition["nidx_down"], i_maxw, batch_dims=1)
-        print("i_maxidx", i_maxidx, i_maxidx.shape)
-        # now this needs to be somehow translated to the 'up' part...
-        up_idx = tf.scatter_nd(
-            transition["sel_idx_up"], idxs, shape=transition["sel_idx_up"].shape
-        )
-        print("up_idx", up_idx, up_idx.shape)
-
-        g_idx = tf.gather_nd(up_idx, i_maxidx)  # now we're done?
-        print("g_idx", g_idx, g_idx.shape)
-        return g_idx
-
-
-graph_condensation_layers["CreateGatherIndices"] = CreateGatherIndices
 
 
 class PushUp(tf.keras.layers.Layer):
@@ -693,131 +642,6 @@ class DenseOnUp(tf.keras.layers.Layer):
 graph_condensation_layers["DenseOnUp"] = DenseOnUp
 
 
-class CreateGraphCondensationEdges(tf.keras.layers.Layer):
-
-    def __init__(
-        self, edge_dense, pre_nodes, K, self_dense=None, no_self=False, **kwargs
-    ):
-        """
-
-
-        Inputs:
-        - features
-        - graph transition
-
-        Outputs:
-        - processed edges with K+1 entries (first is self-edge), V x K+1
-
-        """
-
-        super(CreateGraphCondensationEdges, self).__init__(**kwargs)
-
-        assert len(edge_dense) > 0 and isinstance(edge_dense, list)
-        assert self_dense is None or len(self_dense) > 0
-
-        self.no_self = no_self
-        self.pre_nodes = pre_nodes
-        self.K = K
-
-        with tf.name_scope(self.name + "/0/"):
-            self.pre_dense = tf.keras.layers.Dense(
-                self.pre_nodes, activation="elu", trainable=self.trainable
-            )
-
-        self.edge_dense = []
-        self.self_dense = []
-        for i, n in enumerate(edge_dense):
-            with tf.name_scope(self.name + "/1/" + str(i)):
-                self.edge_dense.append(
-                    tf.keras.layers.Dense(n, activation="elu", trainable=self.trainable)
-                )
-
-        with tf.name_scope(self.name + "/1/" + str(i + 1)):
-            self.edge_dense.append(
-                tf.keras.layers.Dense(self.K, trainable=self.trainable)
-            )
-
-        if self_dense is None:
-            self_dense = edge_dense
-        if self.no_self:
-            self_dense = []
-
-        for i, n in enumerate(self_dense):
-            with tf.name_scope(self.name + "/2/" + str(i)):
-                self.self_dense.append(
-                    tf.keras.layers.Dense(n, activation="elu", trainable=self.trainable)
-                )
-
-        with tf.name_scope(self.name + "/2/" + str(i + 1)):
-            self.self_dense.append(tf.keras.layers.Dense(1, trainable=self.trainable))
-
-    def get_config(self):
-        config = {
-            "edge_dense": [
-                self.edge_dense[i].units for i in range(len(self.edge_dense) - 1)
-            ],
-            "self_dense": [
-                self.self_dense[i].units for i in range(len(self.self_dense) - 1)
-            ],
-            "no_self": self.no_self,
-            "K": self.K,
-            "pre_nodes": self.pre_nodes,
-        }
-        base_config = super(CreateGraphCondensationEdges, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
-
-    def build(self, input_shape):
-        # print('input_shapes',input_shapes)
-        # input_shape = input_shapes[0]
-
-        self.pre_dense.build(input_shape)
-
-        for i, d in enumerate(self.edge_dense):
-            with tf.name_scope(self.name + "/1/" + str(i)):
-                if not i:
-                    d.build((None, self.K * (self.pre_dense.units + 1)))
-                else:
-                    d.build((None, self.edge_dense[i - 1].units))
-
-        for i, d in enumerate(self.self_dense):
-            with tf.name_scope(self.name + "/2/" + str(i)):
-                if not i:
-                    d.build(input_shape)
-                else:
-                    d.build((None, self.self_dense[i - 1].units))
-
-        super(CreateGraphCondensationEdges, self).build(input_shape)
-
-    def call(self, x, transition: GraphCondensation):
-        nidx = transition["nidx_down"]
-
-        x_n = self.pre_dense(x)
-
-        x_n = x_n[:, tf.newaxis, :] - select(nidx, x_n, 0.0)  # V x K x F
-        x_n = tf.concat(
-            [x_n, transition["distsq_down"][:, :, tf.newaxis]], axis=2
-        )  # V x K x F+1
-        x_n = tf.reshape(x_n, [-1, x_n.shape[1] * x_n.shape[2]])  # V x K * (F+1)
-
-        for d in self.edge_dense:
-            x_n = d(x_n)
-
-        if self.no_self:
-            x = x_n
-        else:
-            x_s = x
-            for d in self.self_dense:
-                x_s = d(x_s)
-            x = tf.concat([x_s, x_n], axis=1)
-
-        x = tf.nn.softmax(x, axis=1)
-
-        return x
-
-
-graph_condensation_layers["CreateGraphCondensationEdges"] = CreateGraphCondensationEdges
-
-
 class AddNeighbourDiff(tf.keras.layers.Layer):
     def __init__(self, *args, **kwargs):
         """
@@ -837,109 +661,6 @@ class AddNeighbourDiff(tf.keras.layers.Layer):
 
 
 graph_condensation_layers["AddNeighbourDiff"] = AddNeighbourDiff
-
-
-class CreateGraphCondensationEdges2(tf.keras.layers.Layer):
-
-    def call(self, x, transition: GraphCondensation):
-        nidx = transition["nidx_down"]
-        x_nn = select(nidx, x, 0.0)
-        x_n = x[:, tf.newaxis, :] - x_nn  # V x K x F
-
-        # add one for noise
-        x_n = tf.concat(
-            [x[:, tf.newaxis, :] - tf.reduce_mean(x_nn, axis=1, keepdims=True), x_n],
-            axis=1,
-        )
-
-        return x_n
-
-
-graph_condensation_layers["CreateGraphCondensationEdges2"] = (
-    CreateGraphCondensationEdges2
-)
-
-
-class CreateMultiAttentionGraphTransitions(tf.keras.layers.Layer):
-
-    def __init__(self, n_heads, pre_nodes, K, dense_nodes, **kwargs):
-        """
-        Inputs:
-        - features
-        - graph transition
-
-        Outputs:
-        - a list of graph transform descriptors, one per head
-
-        """
-
-        super(CreateMultiAttentionGraphTransitions, self).__init__(**kwargs)
-        self.dense_nodes = dense_nodes
-        self.n_heads = n_heads
-        self.pre_nodes = pre_nodes
-        self.K = K
-
-        with tf.name_scope(self.name + "/0/"):
-            self.pre_dense = tf.keras.layers.Dense(self.pre_nodes, activation="elu")
-
-        self.dense = []
-        for i, n in enumerate(self.dense_nodes):
-            with tf.name_scope(self.name + "/1/" + str(i)):
-                self.dense.append(tf.keras.layers.Dense(n, activation="elu"))
-
-        with tf.name_scope(self.name + "/1/" + str(i + 1)):
-            self.dense.append(tf.keras.layers.Dense(self.K * self.n_heads))
-
-    def get_config(self):
-        config = {
-            "dense_nodes": self.dense_nodes,
-            "n_heads": self.n_heads,
-            "K": self.K,
-            "pre_nodes": self.pre_nodes,
-        }
-        base_config = super(CreateMultiAttentionGraphTransitions, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
-
-    def build(self, input_shape):
-
-        self.pre_dense.build(input_shape)
-
-        for i, d in enumerate(self.dense):
-            with tf.name_scope(self.name + "/1/" + str(i)):
-                if not i:
-                    d.build((None, self.K * (self.pre_dense.units + 1)))
-                else:
-                    d.build((None, self.dense[i - 1].units))
-
-    def call(self, x, transition: GraphCondensation):
-
-        nidx = transition["nidx_down"]
-
-        x_n = self.pre_dense(x)
-
-        x_n = x_n[:, tf.newaxis, :] - select(nidx, x_n, 0.0)  # V x K x F
-        x_n = tf.concat(
-            [x_n, transition["distsq_down"][:, :, tf.newaxis]], axis=2
-        )  # V x K x F+1
-        x_n = tf.reshape(x_n, [-1, x_n.shape[1] * x_n.shape[2]])  # V x K * (F+1)
-
-        for d in self.dense:
-            x_n = d(x_n)
-
-        # now output is V x K x Nheads, transpose to V x Nheads x K
-        x_n = tf.reshape(x_n, [-1, self.n_heads, self.K])
-        x_n = tf.nn.softmax(x_n, axis=-1)  # softmax over K
-        out = []
-        for i in range(self.n_heads):
-            t = transition.copy()  # shallow so not a big deal
-            t["weights_down"] = x_n[:, i]  # V x K
-            out.append(t)
-        return out
-
-
-graph_condensation_layers["CreateMultiAttentionGraphTransitions"] = (
-    CreateMultiAttentionGraphTransitions
-)
 
 
 class InsertEdgesIntoTransition(tf.keras.layers.Layer):
@@ -994,35 +715,6 @@ class InsertEdgesIntoTransition(tf.keras.layers.Layer):
 
 
 graph_condensation_layers["InsertEdgesIntoTransition"] = InsertEdgesIntoTransition
-
-
-class GetNeighbourMask(tf.keras.layers.Layer):
-
-    def __init__(self, add_left=True, add_dim=True, **kwargs):
-        self.add_left = add_left
-        self.add_dim = add_dim
-        super(GetNeighbourMask, self).__init__(**kwargs)
-
-    def get_config(self):
-        config = {"add_left": self.add_left, "add_dim": self.add_dim}
-        base_config = super(GetNeighbourMask, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
-
-    def call(self, trans: GraphCondensation):
-        nidx = trans["nidx_down"]
-        ones = tf.ones_like(nidx, dtype="float32")
-        out = tf.where(nidx < 0, 0.0, ones)
-        if self.add_left:
-            out = tf.concat([ones[:, 0:1], out], axis=1)  # noise always possible
-        if self.add_dim:
-            out = out[..., tf.newaxis]
-        return out
-
-
-graph_condensation_layers["GetNeighbourMask"] = GetNeighbourMask
-
-
-###################### Only losses for building the hypergraph #######################
 
 
 class LLGraphCondensationScore(LossLayerBase):
@@ -1532,9 +1224,6 @@ class LLGraphCondensationEdges(LossLayerBase):
 graph_condensation_layers["LLGraphCondensationEdges"] = LLGraphCondensationEdges
 
 
-from MetricsLayers import MLReductionMetrics
-
-
 class MLGraphCondensationMetrics(MLReductionMetrics):
 
     def __init__(self, **kwargs):
@@ -1573,10 +1262,6 @@ class MLGraphCondensationMetrics(MLReductionMetrics):
 graph_condensation_layers["MLGraphCondensationMetrics"] = MLGraphCondensationMetrics
 
 
-# convenience function
-from LossLayers import LLClusterCoordinates
-
-
 def add_attention(graph_transition, x, name, trainable=True):
     a = graph_transition.copy()
     att = tf.keras.layers.Dense(
@@ -1584,79 +1269,6 @@ def add_attention(graph_transition, x, name, trainable=True):
     )(x)
     a["weights_down"] = att
     return a
-
-
-def point_pool(indict: dict, rs, name="p_pool", n_heads=3, K_loss=64, trainable=True):
-
-    # dict needs to contain: x, is_track, t_idx, t_spectator_weight
-
-    x, is_track, t_idx, t_spectator_weight = (
-        indict["x"],
-        indict["is_track"],
-        indict["t_idx"],
-        indict["t_spectator_weight"],
-    )
-
-    score = tf.keras.layers.Dense(
-        1, activation="sigmoid", name=name + "_gc_score", trainable=trainable
-    )(x)
-    coords = tf.keras.layers.Dense(
-        3, name=name + "_xyz_cond", use_bias=False, trainable=trainable
-    )(x)
-
-    coords = LLClusterCoordinates(
-        active=trainable,
-        downsample=5000,  # no need to use all
-        scale=1.0,
-        name=name + "_ll_cc",
-        ignore_noise=True,  # this is filtered by the graph condensation anyway
-        hinge_mode=True,
-    )([coords, t_idx, t_spectator_weight, score, rs])
-
-    score = LLGraphCondensationScore(
-        active=trainable,
-        name=name + "_ll_score",
-        K=K_loss,
-    )([score, coords, t_idx, rs])
-
-    trans_a = CreateGraphCondensation(
-        print_reduction=False, name=name + "_gc_create", score_threshold=0.5, K=5
-    )(score, coords, rs, always_promote=is_track)
-
-    out = []
-    for i in range(n_heads):
-        att = add_attention(trans_a, x, name + "_up_att_" + str(i), trainable=trainable)
-        out.append(PushUp()(x, att))
-
-    odict = {}
-    for k in indict.keys():
-        odict[k] = SelectUp()(indict[k], trans_a)
-
-    out.append(odict["x"])
-    out = tf.keras.layers.Concatenate()(out)
-    odict["x"] = out
-
-    return trans_a, odict, trans_a["rs_up"]  # for backscatter
-
-
-def point_scatter(x, trans: list, dense_nodes=64, name=""):
-    """
-    watch out -> this can become big
-    """
-
-    trans = trans.copy()
-    trans.reverse()
-    for t in range(len(trans)):
-        ta = trans[t]
-        x = SelectDown()(x, ta)
-        x = tf.keras.layers.Dense(
-            dense_nodes, activation="elu", name=name + "_d_" + str(t)
-        )(x)
-
-    return x
-
-
-import numpy as np
 
 
 def _get_first_occurrence_mask(a, b):
@@ -1707,60 +1319,3 @@ def get_unique_masks(t_idx, sel):
     unique_lost_mask = _get_first_occurrence_mask(t_idx, unique_lost_t_idx)
 
     return unique_selected_mask, unique_lost_mask, any_unique_t_idx
-
-
-def test_get_lost_objects_mask():
-    V = 12
-
-    # Example arrays (replace with your actual data)
-    t_idx = tf.constant(
-        [0, 0, 1, 1, 6, 6, 3, 3, 4, -1, -1, -1], dtype=tf.int32
-    )  # Truth index
-
-    sel = tf.constant([1, 0, 4, 5, 8], dtype=tf.int32)  # Selected points
-
-    print("\n\n\n")
-    print("t_idx", t_idx.numpy())
-    print("selected t_idx", tf.gather(t_idx, sel).numpy())
-    print("expected lost object t_idx", [1, 3, -1])
-    print("expected selected object t_idx", [0, 6, 4])
-    # Same random property where t_idx is the same
-    t_property = tf.cast(t_idx, tf.float32)
-
-    unique_selected_mask, unique_lost_mask, _ = get_unique_masks(t_idx, sel)
-
-    print("unique sel mask", unique_selected_mask.numpy())
-    print("unique_lost_mask", unique_lost_mask.numpy())
-
-    unique_selected_properties = tf.boolean_mask(t_property, unique_selected_mask)
-    unique_lost_properties = tf.boolean_mask(t_property, unique_lost_mask)
-
-    # Evaluate the results
-    print("Unique selected properties per object:", unique_selected_properties.numpy())
-    print("Unique lost properties per object:", unique_lost_properties.numpy())
-
-
-# test_get_lost_objects_mask()
-
-
-# create a large scale test with 100000 points
-def test_get_lost_objects_mask_large_scale():
-    V = 100000
-
-    # Example arrays (replace with your actual data)
-    t_idx = tf.random.uniform(
-        (V,), minval=-1, maxval=100, dtype=tf.int32
-    )  # Truth index
-    sel = tf.random.uniform(
-        (V // 1000,), minval=0, maxval=V, dtype=tf.int32
-    )  # Selected points
-
-    unique_selected_mask, unique_lost_mask = get_unique_masks(t_idx, sel)
-
-    unique_selected_properties = tf.boolean_mask(t_idx, unique_selected_mask)
-    unique_lost_properties = tf.boolean_mask(t_idx, unique_lost_mask)
-
-    # Evaluate the results
-    print("Unique selected properties per object:", unique_selected_properties.numpy())
-    print("Unique lost properties per object:", unique_lost_properties.numpy())
-

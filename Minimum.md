@@ -117,3 +117,89 @@
       * [x] ShowersMatcher3 -> calculate_iou_serial_fast_comp
   * [x] extra_plots
   * [x] visualize_events
+
+# Files
+
+* modules/Layers.py
+  * CreateTruthSpectatorWeights
+  * CastRowSplits
+  * ProcessFeatures
+  * XYZtoXYZPrime
+  * KNN
+  * LocalDistanceScaling
+  * TranslationInvariantMP
+  * layernorm
+  * LLClusterCoordinates
+  * LossLayerBase
+  * LLValuePenalty
+  * DummyLayer
+  * ProcessFeatures
+  * ExtendedObjectCondensation*
+  * FullObjectCondensation
+* modules/LossLayers.py
+  * [x] CreateTruthSpectatorWeights
+  * [x] LLClusterCoordinates
+  * [x] LossLayerBase
+  * [x] LLValuePenalty
+  * [x] smooth_max
+  * [x] ExtendedObjectCondensation*
+  * [x] FullObjectCondensation
+  * [x] huber
+  * [x] quantile
+* modules/GravNetLayersRagged.py
+  * [x] CastRowSplits
+  * [x] ProcessFeatures
+  * [x] XYZtoXYZPrime
+  * [x] KNN
+  * [x] LocalDistanceScaling
+  * [x] TranslationInvariantMP
+  * [x] ProcessFeatures
+* modules/GraphCondensationLayers.py
+  * [x] LLGraphCondensationScore
+  * [x] CreateGraphCondensation
+  * [x] GraphCondensation
+  * [x] RestrictedDict
+  * [x] MLGraphCondensationMetrics
+  * [x] AddNeighbourDiff
+  * [x] LLGraphCondensationEdges
+  * [x] InsertEdgesIntoTransition
+  * [x] PushUp
+  * [x] Mix
+  * [x] SelectUp
+* DebugLayers.py
+  * [x] PlotGraphCondensationEfficiency
+  * [x] _DebugPlotBase
+  * [x] CumulativeArray
+  * [x] PlotCoordinates
+* modules/model_blocks.py
+  * [x] condition_input
+  * [x] double_tree_condensation_block
+  * [x] tree_condensation_block
+  * [x] GravNet_plus_TEQMP
+  * [x] mini_tree_create
+  * [x] mini_tree_clustering
+  * [x] post_tree_condensation_push
+  * [x] tree_condensation_block2
+  * [x] tree_condensation_block
+  * [x] create_outputs
+* modules/MetricsLayer.py
+  * [x] MLReductionMetrics
+  * [x] MLBase
+* basemodule.py
+  * [x] LayerWithMetrics
+* oc_helper_ops.py
+  * [x] SelectWithDefault
+* plotting_tools
+  * [x] shuffle_truth_colors
+* object_condensation -> *
+
+## Operators
+
+* slicing_knn_op
+* binned_select_knn_op
+* bin_by_coordinates_op
+* index_replacer_op
+* globals -> knn_ops_use_tf_gradients
+* accknn_op -> AccumulateKnn
+* oc_helper_ops: CreateMidx
+* push_knn_op

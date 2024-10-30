@@ -20,7 +20,6 @@ from GravNetLayersRagged import (
     CastRowSplits,
     ProcessFeatures,
 )
-from Initializers import EyeInitializer
 from Layers import OnesLike, ZerosLike, CreateTruthSpectatorWeights
 from Layers import TranslationInvariantMP, DummyLayer
 from DebugLayers import PlotCoordinates, PlotGraphCondensationEfficiency
@@ -35,21 +34,6 @@ from GraphCondensationLayers import (
     LLGraphCondensationScore,
     AddNeighbourDiff,
 )
-
-
-def extent_coords_if_needed(
-    coords, x, n_cluster_space_coordinates, name="coord_extend"
-):
-    if n_cluster_space_coordinates > 3:
-        x = Concatenate()([coords, x])
-        extendcoords = Dense(
-            n_cluster_space_coordinates - 3,
-            use_bias=False,
-            name=name + "_dense",
-            kernel_initializer=EyeInitializer(stddev=0.001),
-        )(x)
-        coords = Concatenate()([coords, extendcoords])
-    return coords
 
 
 # new format!
@@ -248,24 +232,6 @@ def condition_input(orig_inputs, no_scaling=False, no_prime=False, new_prime=Fal
             )
 
     return orig_inputs
-
-
-def expand_coords_if_needed(coords, x, ndims, name, trainable):
-    if coords.shape[-1] == ndims:
-        return coords
-    if coords.shape[-1] > ndims:
-        raise ValueError("only expanding coordinates")
-    return Concatenate()(
-        [
-            coords,
-            Dense(
-                ndims - coords.shape[-1],
-                kernel_initializer="zeros",
-                name=name,
-                trainable=trainable,
-            )(x),
-        ]
-    )
 
 
 def mini_tree_create(
