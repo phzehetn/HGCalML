@@ -250,7 +250,6 @@ train.trainModel(
     collect_gradients=4,  # average out more gradients
 )
 
-"""
 train.change_learning_rate(2e-4)
 train.trainModel(
     nepochs=1 + 2,
@@ -282,4 +281,3 @@ train.trainModel(
     additional_callbacks=[],
     collect_gradients=4,
 )
-"""
