@@ -874,4 +874,4 @@ def double_tree_condensation_block(
     all_out["no_noise_idx_stage_1"] = graph2["sel_idx_up"]
     all_out["survived_both_stages"] = survived_both_stages
 
-    return out2, graph2, all_out
+    return out2, graph2, all_out, graph

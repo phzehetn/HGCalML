@@ -57,7 +57,9 @@ class GraphCondensation(RestrictedDict):
             "distsq_down",  # in case it's needed
             "sel_idx_up",  # -> can also be used to scatter
             "weights_down",
-            #'is_up'
+            "coords",
+            "score",
+            #'is_up',
         ]
 
         super().__init__(*args, **kwargs)
@@ -265,6 +267,8 @@ class CreateGraphCondensation(tf.keras.layers.Layer):
         trans["nidx_down"] = tf.reshape(trans["nidx_down"], [-1, self.K])
         trans["distsq_down"] = tf.reshape(trans["distsq_down"], [-1, self.K])
         trans["weights_down"] = tf.reshape(trans["weights_down"], [-1, self.K])
+        trans["score"] = score
+        trans["coords"] = coords
 
         if self.print_reduction:
             print(
