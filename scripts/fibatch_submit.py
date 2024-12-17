@@ -37,8 +37,8 @@ TRIGGERED_TIME=False
 TRIGGERED_GPU=False
 NAME="batchscript"
 # constraint="a100"
-CONSTRAINT="a100-80gb"
-#CONSTRAINT="a100"
+# CONSTRAINT="a100-80gb"
+CONSTRAINT="h100"
 TIME="7-0"
 GPUS="1"
 
