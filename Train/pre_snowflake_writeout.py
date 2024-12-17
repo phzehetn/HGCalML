@@ -239,7 +239,7 @@ if not train.modelSet():
 
 # set the learning rate to 1e-2
 
-batchsize = 80000
+batchsize = 280000
 
 train.change_learning_rate(1e-3)
 train.trainModel(
