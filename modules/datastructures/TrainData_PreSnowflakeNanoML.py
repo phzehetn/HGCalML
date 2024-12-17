@@ -87,6 +87,24 @@ def _getkeys(file):
     output_keys.remove('orig_row_splits') 
 
     # output_keys.remove('orig_row_splits') # PZ: didn't exist
+    """
+    [('g0_rs_down', (200,)), ('g0_rs_up', (200,)), ('g0_nidx_down', (29334149, 5)), ('g0_distsq_down', (29334149, 5)),
+    ('g0_sel_idx_up', (4015472, 1)), ('g0_weights_down', (29334149, 5)), ('g0_coords', (29334149, 4)),
+    ('g0_score', (29334149, 1)), ('coords', (845840, 3)), ('score', (4015472, 1)),
+    ('pre_oc_beta', (845840, 1)), ('prime_coords', (845840, 3)), ('rechit_energy', (845840, 1)), ('features', (845840, 969)), ('t_minbias_weighted', (845840, 1)), ('is_track', (845840, 1)), ('t_idx', (845840, 1)), ('t_energy', (845840, 1)), ('t_pos', (845840, 3)), ('t_time', (845840, 1)), ('t_pid', (845840, 1)), ('t_spectator', (845840, 1)), ('t_fully_contained', (845840, 1)), ('t_rec_energy', (845840, 1)), ('t_is_unique', (845840, 1)), ('t_only_minbias', (845840, 1)), ('t_shower_class', (845840, 1)), ('t_spectator_weight', (845840, 1)), ('survived_both_stages', (845840, 1))]
+    """
+    output_keys.remove('g0_rs_down')
+    output_keys.remove('g0_rs_up')
+    output_keys.remove('g0_nidx_down')
+    output_keys.remove('g0_distsq_down')
+    output_keys.remove('g0_sel_idx_up')
+    output_keys.remove('g0_weights_down')
+    output_keys.remove('g0_coords')
+    output_keys.remove('g0_score')
+    output_keys.remove('coords')
+    output_keys.remove('score')
+
+
     if 'no_noise_row_splits' in output_keys:
         output_keys.remove('no_noise_row_splits')
     del tmp_model #close tf
@@ -114,7 +132,8 @@ class TrainData_PreSnowflakeNanoML(TrainData):
     model_keys = None
 
     def set_model(self):
-        self.path_to_pretrained = os.path.join(os.getenv("HGCALML"), "models/pre_snowflake/pre_snowflake.h5")
+        self.path_to_pretrained = "/mnt/home/pzehetner/Models/presnowflake_pretrained_ep5/KERAS_check_model_block_3_epoch_17.h5"
+        # self.path_to_pretrained = os.path.join(os.getenv("HGCALML"), "models/pre_snowflake/pre_snowflake.h5")
         # self.path_to_pretrained = os.getenv("HGCALML")+'/models/double_tree_condensation_block/KERAS_check_model_last.h5'
         # self.path_to_pretrained = os.getenv("HGCALML")+'/models/pre-cluster_tmp/KERAS_check_model_last.h5'
         # self.path_to_pretrained = "/mnt/home/jkieseler/trainout/May24/dps_Aug24/KERAS_check_model_last.h5"
@@ -223,8 +242,9 @@ class TrainData_PreSnowflakeNanoML(TrainData):
             # For all hits: -> New sum of all hits
             # For all noise: -> Noise energy is shower energy
             # For all tracks: -> Do nothing
-            if not (rs_tmp[-1] == len(out[self.output_keys[0]])):
-                print( self.output_keys[0], rs_tmp[-1],  len(out[self.output_keys[0]]) )
+            # if not (rs_tmp[-1] == len(out[self.output_keys[0]])): # With intermediate graph added this is not reliable
+            if not (rs_tmp[-1] == len(out["t_rec_energy"])):
+                print( self.output_keys[0], rs_tmp[-1],  len(out['t_rec_energy']) )
                 raise ValueError('row splits do not match input size')
 
             #format time to ms and round to int
