@@ -297,6 +297,7 @@ if not train.modelSet():
 # set the learning rate to 1e-2
 
 
+"""
 train.change_learning_rate(1e-3)
 train.trainModel(
     nepochs=10,
@@ -306,10 +307,11 @@ train.trainModel(
     collect_gradients=4,  # average out more gradients
 )
 
+"""
 train.change_learning_rate(2e-4)
 train.trainModel(
-    nepochs=1 + 2 + 10,
-    batchsize=10000,
+    nepochs=1,
+    batchsize=50000,
     add_progbar=pre_args.no_wandb,
     additional_callbacks=[],
     collect_gradients=4,  # average out more gradients
@@ -326,13 +328,13 @@ def fix_batchnorm(m):
 # apply to all models
 train.applyFunctionToAllModels(fix_batchnorm)
 # recompile
-train.compileModel(learningrate=1e-3)
+train.compileModel(learningrate=2e-4)
 print("entering second training phase")
 
 train.change_learning_rate(3e-5)
 train.trainModel(
-    nepochs=1 + 2 + 20 + 10,
-    batchsize=60000,
+    nepochs=1 + 10,
+    batchsize=50000,
     add_progbar=False,
     additional_callbacks=[],
     collect_gradients=4,
