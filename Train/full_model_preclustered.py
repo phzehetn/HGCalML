@@ -19,7 +19,7 @@ import training_base_hgcal
 from datastructures import TrainData_PreSnowflakeNanoML
 from Layers import ProcessFeatures
 from Layers import PlotCoordinates, ZerosLike
-from Layers import LLExtendedObjectCondensation5
+from Layers import LLExtendedObjectCondensation6
 from Layers import CastRowSplits
 from model_blocks import condition_input
 from model_blocks import create_outputs
@@ -87,7 +87,7 @@ LOSS_OPTIONS = {
     "use_average_cc_pos": 0.9999,
     "use_energy_weights": False,
 }
-loss_layer = LLExtendedObjectCondensation5
+loss_layer = LLExtendedObjectCondensation6
 
 
 def config_model(
