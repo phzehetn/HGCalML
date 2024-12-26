@@ -13,8 +13,6 @@ from djcdata.dataPipeline import TrainDataGenerator
 from DeepJetCore.modeltools import load_model
 
 from datastructures.TrainData_NanoML import TrainData_NanoML
-from datastructures.TrainData_PreselectionNanoML import TrainData_PreselectionNanoML
-from datastructures import TrainData_TrackML
 from LossLayers import LossLayerBase
 
 
@@ -110,13 +108,6 @@ class HGCalPredictor():
             td = self.dc.dataclass()
 
             #also allows for inheriting classes now, like with tracks or special PU
-            if not isinstance(td, TrainData_NanoML)  and type(td) is not TrainData_TrackML:
-                print(td.__class__.__name__, "not yet fully supported")
-            elif not isinstance(td, TrainData_PreselectionNanoML):
-                print(td.__class__.__name__, "support still experimental")
-            else:
-                raise RuntimeError("TODO: make sure this works for other traindata formats")
-
             if inputfile[-5:] == 'djctd':
                 if self.unbuffered:
                     td.readFromFile(use_inputdir + "/" + inputfile)
