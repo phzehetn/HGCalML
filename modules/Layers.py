@@ -99,6 +99,7 @@ from LossLayers import (
     LLFullObjectCondensation,
     LLExtendedObjectCondensation,
     LLExtendedObjectCondensation5,
+    LLExtendedObjectCondensation6,
 )
 
 global_layers_list["NormaliseTruthIdxs"] = NormaliseTruthIdxs
@@ -112,6 +113,7 @@ global_layers_list["LLClusterCoordinates"] = LLClusterCoordinates
 global_layers_list["LLFullObjectCondensation"] = LLFullObjectCondensation
 global_layers_list["LLExtendedObjectCondensation"] = LLExtendedObjectCondensation
 global_layers_list["LLExtendedObjectCondensation5"] = LLExtendedObjectCondensation5
+global_layers_list["LLExtendedObjectCondensation6"] = LLExtendedObjectCondensation6
 
 
 class DummyLayer(tf.keras.layers.Layer):

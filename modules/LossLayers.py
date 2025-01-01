@@ -1796,7 +1796,7 @@ class LLExtendedObjectCondensation6(LLExtendedObjectCondensation):
     """
 
     def __init__(self, *args, **kwargs):
-        super(LLExtendedObjectCondensation5, self).__init__(*args, **kwargs)
+        super(LLExtendedObjectCondensation6, self).__init__(*args, **kwargs)
 
     def calc_energy_weights(self, t_energy, t_pid=None, upmouns=True):
         return _calc_energy_weights_quadratic(

@@ -25,6 +25,7 @@ if '-h' in sys.argv or '--help' in sys.argv:
 
 # can be used by others on FI
 DJCLOC="/mnt/ceph/users/jkieseler/containers/deepjetcore4_abc9aee.sif"
+DJCLOC="/mnt/home/pzehetner/containers/deepjetcore_4_tag.sif"
 UEXT = str(uuid.uuid4())
 
 WORKDIR=None
