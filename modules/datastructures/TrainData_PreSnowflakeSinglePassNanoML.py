@@ -59,7 +59,7 @@ def calc_phi(x, y, z):
 
 #just load once at import
 
-class TrainData_PreSnowflakeNanoML(TrainData):
+class TrainData_PreSnowflakeNanoSinglePassML(TrainData):
 
     model_keys = None
 
@@ -73,8 +73,8 @@ class TrainData_PreSnowflakeNanoML(TrainData):
 
         self.set_model()
 
-        if TrainData_PreSnowflakeNanoML.model_keys is None:
-            TrainData_PreSnowflakeNanoML.model_keys=_getkeys(self.path_to_pretrained)#load only once
+        if TrainData_PreSnowflakeNanoSinglePassML.model_keys is None:
+            TrainData_PreSnowflakeNanoSinglePassML.model_keys=_getkeys(self.path_to_pretrained)#load only once
 
         self.no_fork=True #make sure conversion can use gpu
 
@@ -82,7 +82,7 @@ class TrainData_PreSnowflakeNanoML(TrainData):
         self.cp_plus_pu_mode = False
         #preselection model used
 
-        self.output_keys = TrainData_PreSnowflakeNanoML.model_keys
+        self.output_keys = TrainData_PreSnowflakeNanoSinglePassML.model_keys
 
     def convertFromSourceFile(self, filename, weighterobjects, istraining, treename=""):
          
@@ -291,7 +291,7 @@ class TrainData_PreSnowflakeNanoML(TrainData):
         return out
 
 
-class TrainData_PreselectionNanoMLPF2(TrainData_PreSnowflakeNanoML):
+class TrainData_PreselectionNanoMLPF2(TrainData_PreSnowflakeNanoSinglePassML):
 
     def set_model(self):
         self.path_to_pretrained = os.getenv("HGCALML")+'/models/pre_selection_pf2/KERAS_model.h5'
